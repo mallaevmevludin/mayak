@@ -1,0 +1,62 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+analyze.log
+skills-lock.json
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+lib/services/supabase_local.dart
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Node / Next.js (admin panel)
+admin/node_modules/
+admin/.next/
+admin/out/
+admin/.vercel/
+
+# Supabase CLI temp
+supabase/.temp/
+
+# Cursor / local tooling
+.agents/
+.ruby-lsp/

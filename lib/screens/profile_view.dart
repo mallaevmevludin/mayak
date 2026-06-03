@@ -1,0 +1,1439 @@
+import 'dart:io';
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/user_model.dart';
+import '../models/post_model.dart';
+import '../models/job_model.dart';
+import '../services/auth_service.dart';
+import '../services/social_service.dart';
+import '../services/job_service.dart';
+import '../services/image_upload_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/post_card.dart';
+import '../widgets/interests_selector.dart';
+import '../widgets/top_notification.dart';
+import 'crop_editor_screen.dart';
+import 'job_detail_screen.dart';
+
+class ProfileView extends StatefulWidget {
+  const ProfileView({super.key});
+
+  @override
+  State<ProfileView> createState() => _ProfileViewState();
+}
+
+class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final ScrollController _scrollController = ScrollController();
+  final TextEditingController _bioController = TextEditingController();
+  List<String> _tempInterests = [];
+  bool _isEditing = false;
+  List<PostModel> _userPosts = [];
+  bool _isLoadingPosts = true;
+  bool _isCompletionCardDismissed = false;
+  List<JobModel> _myJobs = [];
+  bool _isLoadingMyJobs = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+    _bioController.addListener(_bioListener);
+    _scrollController.addListener(_scrollListener);
+    _loadUserPosts();
+    _loadMyJobs();
+    _loadCompletionCardDismissState();
+  }
+
+  void _scrollListener() {
+    // Optional scroll behavior
+  }
+
+  Future<void> _loadCompletionCardDismissState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _isCompletionCardDismissed =
+            prefs.getBool('dismissed_profile_completion_card') ?? false;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _dismissCompletionCard() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('dismissed_profile_completion_card', true);
+      setState(() {
+        _isCompletionCardDismissed = true;
+      });
+    } catch (_) {}
+  }
+
+  void _showAvatarOptions(BuildContext context, AuthService authService) {
+    final user = authService.currentUser;
+    if (user == null) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 8.0, sigmaY: 8.0),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).brightness == Brightness.dark
+                ? AppTheme.darkSurface
+                : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Фото профиля',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                dense: true,
+                visualDensity: const VisualDensity(vertical: -2),
+                leading: const Icon(Icons.photo_library_rounded, color: AppTheme.primary),
+                title: const Text('Выбрать из галереи'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndUploadAvatar(context, authService, ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                dense: true,
+                visualDensity: const VisualDensity(vertical: -2),
+                leading: const Icon(Icons.camera_alt_rounded, color: AppTheme.primary),
+                title: const Text('Сделать снимок'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickAndUploadAvatar(context, authService, ImageSource.camera);
+                },
+              ),
+              if (user.avatarUrl != null && user.avatarUrl!.isNotEmpty)
+                ListTile(
+                  dense: true,
+                  visualDensity: const VisualDensity(vertical: -2),
+                  leading: const Icon(Icons.delete_outline_rounded, color: AppTheme.error),
+                  title: const Text(
+                    'Удалить фото',
+                    style: TextStyle(color: AppTheme.error),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final oldAvatarUrl = user.avatarUrl;
+                    await authService.updateAvatarUrl('');
+                    if (oldAvatarUrl != null && oldAvatarUrl.isNotEmpty) {
+                      debugPrint('[AVATAR_LOG] Deleting removed avatar from Yandex Cloud S3: $oldAvatarUrl');
+                      try {
+                        await ImageUploadService.deletePostImage(oldAvatarUrl);
+                        if (context.mounted) {
+                          TopNotification.show(
+                            context,
+                            message: 'Аватар удален из хранилища!',
+                            icon: Icons.check_circle_outline_rounded,
+                            iconColor: AppTheme.success,
+                          );
+                        }
+                      } catch (e) {
+                        debugPrint('[AVATAR_LOG] Failed to delete removed avatar: $e');
+                        if (context.mounted) {
+                          TopNotification.show(
+                            context,
+                            message: 'Ошибка при удалении из хранилища: $e',
+                            icon: Icons.error_outline_rounded,
+                            iconColor: AppTheme.error,
+                          );
+                        }
+                      }
+                    }
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadAvatar(
+    BuildContext context,
+    AuthService authService,
+    ImageSource source,
+  ) async {
+    debugPrint('[AVATAR_LOG] Entering _pickAndUploadAvatar, source: $source');
+    bool isLoadingShown = false;
+    try {
+      final picker = ImagePicker();
+      debugPrint('[AVATAR_LOG] Calling picker.pickImage...');
+      final pickedFile = await picker.pickImage(
+        source: source,
+        maxWidth: 2000,
+        maxHeight: 2000,
+      );
+      if (pickedFile == null) {
+        debugPrint('[AVATAR_LOG] picker.pickImage returned null (user canceled or permission denied)');
+        return;
+      }
+      debugPrint('[AVATAR_LOG] picker.pickImage succeeded. path: ${pickedFile.path}');
+
+      if (!context.mounted) {
+        debugPrint('[AVATAR_LOG] Context not mounted after picking image');
+        return;
+      }
+
+      debugPrint('[AVATAR_LOG] Navigating to CropEditorScreen...');
+      final CropResult? result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CropEditorScreen(
+            imageFile: File(pickedFile.path),
+            isCircle: true,
+          ),
+        ),
+      );
+
+      debugPrint('[AVATAR_LOG] Returned from CropEditorScreen, result is null: ${result == null}');
+      if (result == null) {
+        debugPrint('[AVATAR_LOG] Crop result is null (user canceled crop or load failed)');
+        return;
+      }
+
+      if (!context.mounted) {
+        debugPrint('[AVATAR_LOG] Context not mounted after returning from CropEditorScreen');
+        return;
+      }
+
+      debugPrint('[AVATAR_LOG] Showing loading dialog overlay...');
+      isLoadingShown = true;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(
+            color: AppTheme.primary,
+          ),
+        ),
+      );
+
+      debugPrint('[AVATAR_LOG] Uploading cropped file to Storage, path: ${result.croppedFile.path}');
+      final publicUrl = await ImageUploadService.uploadAvatar(
+        imageFile: result.croppedFile,
+      );
+      debugPrint('[AVATAR_LOG] Upload succeeded, publicUrl: $publicUrl');
+
+      // Hide loading dialog
+      if (context.mounted && isLoadingShown) {
+        debugPrint('[AVATAR_LOG] Hiding loading dialog...');
+        Navigator.pop(context);
+        isLoadingShown = false;
+      }
+
+      final oldAvatarUrl = authService.currentUser?.avatarUrl;
+      debugPrint('[AVATAR_LOG] Updating user avatar_url in auth database...');
+      await authService.updateAvatarUrl(publicUrl);
+      debugPrint('[AVATAR_LOG] authService.updateAvatarUrl completed');
+
+      if (oldAvatarUrl != null && oldAvatarUrl.isNotEmpty) {
+        debugPrint('[AVATAR_LOG] Deleting old avatar from S3 storage: $oldAvatarUrl');
+        try {
+          await ImageUploadService.deletePostImage(oldAvatarUrl);
+        } catch (e) {
+          debugPrint('[AVATAR_LOG] Failed to delete old avatar: $e');
+        }
+      }
+
+      if (context.mounted) {
+        TopNotification.show(
+          context,
+          message: 'Аватар успешно обновлен!',
+          icon: Icons.check_circle_outline_rounded,
+          iconColor: AppTheme.success,
+        );
+      }
+    } catch (e, stackTrace) {
+      debugPrint('[AVATAR_LOG] Catch block triggered: $e');
+      debugPrint('[AVATAR_LOG] StackTrace: $stackTrace');
+      if (context.mounted) {
+        if (isLoadingShown) {
+          Navigator.pop(context);
+        }
+        TopNotification.show(
+          context,
+          message: 'Не удалось загрузить аватар: $e',
+          icon: Icons.error_outline_rounded,
+          iconColor: AppTheme.error,
+        );
+      }
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final success = await authService.updateProfile(
+      biography: _bioController.text.trim(),
+      interests: _tempInterests,
+    );
+
+    if (success && mounted) {
+      TopNotification.show(
+        context,
+        message: 'Профиль успешно обновлен!',
+        icon: Icons.check_circle_outline_rounded,
+        iconColor: AppTheme.success,
+      );
+      setState(() {
+        _isEditing = false;
+      });
+    }
+  }
+
+  Future<void> _loadUserPosts() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final user = authService.currentUser;
+    if (user != null) {
+      final socialService = Provider.of<SocialService>(context, listen: false);
+      final posts = await socialService.fetchUserPosts(user.id);
+      if (mounted) {
+        setState(() {
+          _userPosts = posts;
+          _isLoadingPosts = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMyJobs() async {
+    final jobService = Provider.of<JobService>(context, listen: false);
+    final jobs = await jobService.fetchMyJobs();
+    if (mounted) {
+      setState(() {
+        _myJobs = jobs;
+        _isLoadingMyJobs = false;
+      });
+    }
+  }
+
+  Widget _buildPostsList(bool isDark, List<PostModel> posts) {
+    if (_isLoadingPosts) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(40.0),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppTheme.primary,
+          ),
+        ),
+      );
+    }
+
+    if (posts.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(40),
+          child: Column(
+            children: [
+              Icon(
+                Icons.article_outlined,
+                size: 40,
+                color: isDark ? Colors.white12 : Colors.black12,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Нет публикаций',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: isDark
+                      ? AppTheme.textSecondaryDark
+                      : AppTheme.textSecondaryLight,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: posts.map((post) {
+        return PostCard(
+          post: post,
+          useHero: false,
+          onDelete: () {
+            setState(() {
+              _userPosts.removeWhere((p) => p.id == post.id);
+            });
+          },
+          onLikeToggle: () {
+            setState(() {
+              final idx = _userPosts.indexWhere((p) => p.id == post.id);
+              if (idx != -1) {
+                final p = _userPosts[idx];
+                final wasLiked = p.isLikedByMe;
+                _userPosts[idx] = p.copyWith(
+                  isLikedByMe: !wasLiked,
+                  likesCount: wasLiked ? p.likesCount - 1 : p.likesCount + 1,
+                );
+              }
+            });
+          },
+        );
+      }).toList(),
+    );
+  }
+
+  void _bioListener() {
+    if (_isEditing) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _bioController.removeListener(_bioListener);
+    _scrollController.removeListener(_scrollListener);
+    _scrollController.dispose();
+    _bioController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final authService = Provider.of<AuthService>(context);
+    final user = authService.currentUser;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    if (user != null) {
+      debugPrint('ProfileView: Current user: ${user.username}, biography: "${user.biography}", interests: ${user.interests}');
+    }
+
+    if (user == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.pushReplacementNamed(context, '/login');
+      });
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    if (!_isEditing) {
+      if (_bioController.text.isEmpty && user.biography != null) {
+        _bioController.text = user.biography!;
+      }
+      if (_tempInterests.isEmpty && user.interests.isNotEmpty) {
+        _tempInterests = List<String>.from(user.interests);
+      }
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: NestedScrollView(
+        headerSliverBuilder: (context, innerBoxIsScrolled) {
+          return [
+            SliverAppBar(
+              expandedHeight: 100,
+              floating: false,
+              pinned: true,
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              surfaceTintColor: Colors.transparent,
+              flexibleSpace: FlexibleSpaceBar(
+                titlePadding: const EdgeInsets.only(left: 16, bottom: 10),
+                title: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isDark ? AppTheme.darkSurface : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: isDark ? 0.25 : 0.04,
+                        ),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    'Профиль',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: isDark ? Colors.white : Colors.black,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildHeaderSection(user, theme, isDark, authService),
+                    if (!_isCompletionCardDismissed) ...[
+                      const SizedBox(height: 12),
+                      _buildProfileCompletionCard(user, theme, isDark),
+                    ],
+                    const SizedBox(height: 12),
+                  ],
+                ),
+              ),
+            ),
+            if (!_isEditing)
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _SliverTabBarDelegate(
+                  backgroundColor: isDark ? AppTheme.darkBg : AppTheme.lightBg,
+                  tabBar: TabBar(
+                    controller: _tabController,
+                    tabs: const [
+                      Tab(text: 'Посты'),
+                      Tab(text: 'Заказы'),
+                      Tab(text: 'Инфо'),
+                    ],
+                    labelColor: AppTheme.primary,
+                    unselectedLabelColor: isDark ? Colors.white60 : Colors.black54,
+                    indicatorColor: AppTheme.primary,
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    dividerColor: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05),
+                  ),
+                ),
+              ),
+          ];
+        },
+        body: _isEditing
+            ? SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 140),
+                child: _buildProfileEditMode(theme, isDark, authService.isLoading),
+              )
+            : TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildPostsTab(isDark),
+                  _buildMyJobsTab(isDark),
+                  _buildInfoTab(user, theme, isDark),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderSection(
+      UserModel user, ThemeData theme, bool isDark, AuthService authService) {
+    final totalPosts = _userPosts.length;
+    final totalLikes = _userPosts.fold<int>(0, (sum, post) => sum + post.likesCount);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Stack(
+              children: [
+                GestureDetector(
+                  onTap: _isEditing ? () => _showAvatarOptions(context, authService) : null,
+                  child: Container(
+                    width: 92,
+                    height: 92,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isDark ? AppTheme.darkBg : Colors.white,
+                      border: Border.all(
+                        color: isDark ? Colors.white24 : Colors.black12,
+                        width: 1.5,
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(4),
+                    child: (user.avatarUrl != null && user.avatarUrl!.isNotEmpty)
+                        ? ClipOval(
+                            child: Image.network(
+                              user.avatarUrl!,
+                              width: 84,
+                              height: 84,
+                              fit: BoxFit.cover,
+                              loadingBuilder: (context, child, loadingProgress) {
+                                if (loadingProgress == null) return child;
+                                return const Center(
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.5,
+                                    color: AppTheme.primary,
+                                  ),
+                                );
+                              },
+                              errorBuilder: (context, error, stackTrace) {
+                                return Center(
+                                  child: Text(
+                                    '${user.firstName.isNotEmpty ? user.firstName[0].toUpperCase() : ''}${user.lastName.isNotEmpty ? user.lastName[0].toUpperCase() : ''}',
+                                    style: const TextStyle(
+                                      fontSize: 26,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.primary,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          )
+                        : Center(
+                            child: Text(
+                              '${user.firstName.isNotEmpty ? user.firstName[0].toUpperCase() : ''}${user.lastName.isNotEmpty ? user.lastName[0].toUpperCase() : ''}',
+                              style: const TextStyle(
+                                fontSize: 26,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.primary,
+                              ),
+                            ),
+                          ),
+                  ),
+                ),
+                if (_isEditing)
+                  Positioned(
+                    bottom: 0,
+                    right: 2,
+                    child: GestureDetector(
+                      onTap: () => _showAvatarOptions(context, authService),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isDark ? AppTheme.darkBg : Colors.white,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.camera_alt_rounded,
+                          size: 12,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(width: 20),
+            Expanded(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildHeaderStat(
+                    '$totalPosts',
+                    'Посты',
+                  ),
+                  _buildHeaderStat(
+                    '$totalLikes',
+                    'Лайки',
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Flexible(
+              child: Text(
+                '${user.firstName} ${user.lastName}',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -0.5,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (user.isVerified) ...[
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.verified_rounded,
+                color: AppTheme.primary,
+                size: 20,
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '@${user.username}',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: AppTheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (user.biography != null && user.biography!.trim().isNotEmpty) ...[
+          Text(
+            user.biography!,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: isDark ? Colors.white70 : Colors.black87,
+            ),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 12),
+        ],
+        const SizedBox(height: 8),
+        if (_isEditing)
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: authService.isLoading
+                      ? null
+                      : () {
+                          setState(() {
+                            _isEditing = false;
+                          });
+                        },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    side: BorderSide(
+                      color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Отмена',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  onPressed: authService.isLoading ? null : _saveProfile,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: authService.isLoading
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          'Сохранить',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _isEditing = true;
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.edit_rounded, size: 16),
+                  label: const Text(
+                    'Редактировать профиль',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: isDark ? AppTheme.darkSurface : const Color(0xFFF2F2F7),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
+                    width: 0.5,
+                  ),
+                ),
+                child: IconButton(
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/settings');
+                  },
+                  icon: const Icon(Icons.settings_rounded, color: AppTheme.primary),
+                  tooltip: 'Настройки',
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHeaderStat(String value, String label) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProfileCompletionCard(UserModel user, ThemeData theme, bool isDark) {
+    return Dismissible(
+      key: const Key('profile_completion_card'),
+      direction: DismissDirection.horizontal,
+      onDismissed: (direction) {
+        _dismissCompletionCard();
+        TopNotification.show(
+          context,
+          message: 'Карточка прогресса скрыта',
+          icon: Icons.visibility_off_rounded,
+          actionLabel: 'Отменить',
+          onActionPressed: () async {
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('dismissed_profile_completion_card', false);
+              setState(() {
+                _isCompletionCardDismissed = false;
+              });
+            } catch (_) {}
+          },
+        );
+      },
+      background: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: AppTheme.primary.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.visibility_off_rounded, color: AppTheme.primary, size: 24),
+      ),
+      secondaryBackground: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: AppTheme.primary.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.visibility_off_rounded, color: AppTheme.primary, size: 24),
+      ),
+      child: Card(
+        color: isDark ? AppTheme.darkSurface : Colors.white,
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    user.isProfileComplete ? 'Профиль заполнен 🎉' : 'Заполните профиль',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  Text(
+                    '${(user.completionProgress * 100).toInt()}%',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primary),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: user.completionProgress,
+                  color: AppTheme.primary,
+                  backgroundColor: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
+                  minHeight: 6,
+                ),
+              ),
+              if (!user.isProfileComplete && !_isEditing) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Пожалуйста, расскажите о себе и выберите ваши интересы, чтобы завершить настройку профиля.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary.withValues(alpha: 0.1),
+                    foregroundColor: AppTheme.primary,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.edit_note_rounded),
+                  label: const Text('Заполнить сейчас'),
+                  onPressed: () {
+                    setState(() {
+                      _isEditing = true;
+                    });
+                  },
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPostsTab(bool isDark) {
+    final socialService = Provider.of<SocialService>(context);
+    final displayPosts = _userPosts.map((localPost) {
+      return socialService.posts.firstWhere(
+        (p) => p.id == localPost.id,
+        orElse: () => localPost,
+      );
+    }).toList();
+
+    return RefreshIndicator(
+      onRefresh: _loadUserPosts,
+      color: AppTheme.primary,
+      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        padding: const EdgeInsets.fromLTRB(0, 12, 0, 100),
+        children: [
+          _buildPostsList(isDark, displayPosts),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoTab(UserModel user, ThemeData theme, bool isDark) {
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+      children: [
+        _buildProfileViewMode(user, theme, isDark),
+      ],
+    );
+  }
+
+  Widget _buildMyJobsTab(bool isDark) {
+    if (_isLoadingMyJobs) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(40.0),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppTheme.primary,
+          ),
+        ),
+      );
+    }
+
+    if (_myJobs.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _loadMyJobs,
+        color: AppTheme.primary,
+        backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+          children: [
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 80.0, left: 32, right: 32),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.work_outline_rounded,
+                      size: 40,
+                      color: isDark ? Colors.white12 : Colors.black12,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Нет заказов',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: isDark
+                            ? AppTheme.textSecondaryDark
+                            : AppTheme.textSecondaryLight,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadMyJobs,
+      color: AppTheme.primary,
+      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+        itemCount: _myJobs.length,
+        itemBuilder: (context, index) {
+          final job = _myJobs[index];
+          Color statusColor = AppTheme.success;
+          String statusText = 'Активен';
+          if (job.status == 'closed') {
+            statusColor = Colors.grey;
+            statusText = 'Закрыт';
+          } else if (job.status == 'pending') {
+            statusColor = Colors.orange;
+            statusText = 'На проверке';
+          } else if (job.status == 'rejected') {
+            statusColor = AppTheme.error;
+            statusText = 'Отклонен';
+          }
+
+          return Card(
+            color: isDark ? AppTheme.darkSurface : Colors.white,
+            margin: const EdgeInsets.only(bottom: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(
+                color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
+                width: 0.5,
+              ),
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => JobDetailScreen(job: job),
+                  ),
+                );
+                _loadMyJobs();
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '${job.categoryEmoji} ${job.categoryName}',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.primary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            statusText,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: statusColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      job.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      job.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          job.formattedBudget,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: (job.status == 'closed' || job.status == 'rejected') ? Colors.grey : AppTheme.success,
+                          ),
+                        ),
+                        Text(
+                          '${job.createdAt.day}.${job.createdAt.month}.${job.createdAt.year}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildProfileViewMode(UserModel user, ThemeData theme, bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Учетная информация',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _buildInfoTile(Icons.mail_outline_rounded, 'Эл. почта', user.email),
+        const SizedBox(height: 12),
+        _buildInfoTile(
+          Icons.phone_android_rounded,
+          'Номер телефона',
+          user.phoneNumber,
+        ),
+        const SizedBox(height: 20),
+        Text(
+          'О себе (Биография)',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Card(
+          color: isDark ? AppTheme.darkSurface : Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(
+              color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
+              width: 0.5,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text(
+              (user.biography != null && user.biography!.trim().isNotEmpty)
+                  ? user.biography!
+                  : 'Биография пока не заполнена. Нажмите редактировать, чтобы добавить информацию.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontStyle:
+                    (user.biography == null || user.biography!.trim().isEmpty)
+                    ? FontStyle.italic
+                    : FontStyle.normal,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          'Интересы',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (user.interests.isEmpty)
+          Card(
+            color: isDark ? AppTheme.darkSurface : Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
+                width: 0.5,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Text(
+                'Интересы пока не добавлены.',
+                style: TextStyle(
+                  fontStyle: FontStyle.italic,
+                  color: isDark
+                      ? AppTheme.textSecondaryDark
+                      : AppTheme.textSecondaryLight,
+                ),
+              ),
+            ),
+          )
+        else
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 8.0,
+            children: user.interests.map((interest) {
+              return Chip(
+                label: Text(
+                  interest,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+                backgroundColor: AppTheme.primary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide.none,
+                ),
+              );
+            }).toList(),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildProfileEditMode(ThemeData theme, bool isDark, bool isLoading) {
+    final authService = Provider.of<AuthService>(context);
+    final user = authService.currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Редактирование профиля',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (authService.errorMessage != null) ...[
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppTheme.error.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.error, width: 0.5),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.error_outline,
+                  color: AppTheme.error,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    authService.errorMessage!,
+                    style: const TextStyle(
+                      color: AppTheme.error,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        Text(
+          'О себе (Биография)',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _bioController,
+          maxLines: 4,
+          style: TextStyle(color: isDark ? Colors.white : Colors.black),
+          decoration: InputDecoration(
+            hintText:
+                'Расскажите о себе, своих увлечениях и профессиональной деятельности...',
+            fillColor: isDark ? AppTheme.darkSurface : Colors.white,
+            alignLabelWithHint: true,
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        InterestsSelector(
+          selectedInterests: _tempInterests,
+          onInterestsChanged: (interests) {
+            setState(() {
+              _tempInterests = interests;
+            });
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoTile(IconData icon, String title, String value) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Card(
+      color: isDark ? AppTheme.darkSurface : Colors.white,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
+          width: 0.5,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: AppTheme.primary, size: 20),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isDark
+                          ? AppTheme.textSecondaryDark
+                          : AppTheme.textSecondaryLight,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    value.isNotEmpty ? value : '—',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SliverTabBarDelegate extends SliverPersistentHeaderDelegate {
+  final TabBar tabBar;
+  final Color backgroundColor;
+
+  _SliverTabBarDelegate({required this.tabBar, required this.backgroundColor});
+
+  @override
+  double get minExtent => tabBar.preferredSize.height;
+  @override
+  double get maxExtent => tabBar.preferredSize.height;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return ClipRRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          color: backgroundColor.withValues(alpha: 0.85),
+          child: tabBar,
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(_SliverTabBarDelegate oldDelegate) {
+    return oldDelegate.tabBar != tabBar || oldDelegate.backgroundColor != backgroundColor;
+  }
+}
