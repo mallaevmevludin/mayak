@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../models/post_model.dart';
 import '../../../models/comment_model.dart';
 import '../../../models/user_model.dart';
+import '../../../models/notification_model.dart';
 import 'social_repository.dart';
 
 class SupabaseSocialRepository implements SocialRepository {
@@ -298,5 +299,141 @@ class SupabaseSocialRepository implements SocialRepository {
       'user_id': userId,
       'option_index': optionIndex,
     });
+  }
+
+  // ── Подписки (follows) ──
+
+  static const String _postSelect = '''
+          id, content, created_at, user_id,
+          link_url, link_title,
+          image_url, image_format, image_width, image_height, image_uploaded_at, image_urls,
+          profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
+          post_likes(user_id),
+          comments(id),
+          polls:polls(question, options),
+          poll_votes:poll_votes(user_id, option_index),
+          job_id,
+          jobs:job_id(*, profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified))
+        ''';
+
+  @override
+  Future<void> followUser({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    await _client.from('follows').insert({
+      'follower_id': followerId,
+      'followee_id': followeeId,
+    });
+  }
+
+  @override
+  Future<void> unfollowUser({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    await _client
+        .from('follows')
+        .delete()
+        .eq('follower_id', followerId)
+        .eq('followee_id', followeeId);
+  }
+
+  @override
+  Future<bool> isFollowing({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    final res = await _client
+        .from('follows')
+        .select('follower_id')
+        .eq('follower_id', followerId)
+        .eq('followee_id', followeeId)
+        .limit(1);
+    return (res as List).isNotEmpty;
+  }
+
+  @override
+  Future<Map<String, int>> fetchFollowCounts(String userId) async {
+    final followers = await _client
+        .from('follows')
+        .select('follower_id')
+        .eq('followee_id', userId);
+    final following = await _client
+        .from('follows')
+        .select('followee_id')
+        .eq('follower_id', userId);
+    return {
+      'followers': (followers as List).length,
+      'following': (following as List).length,
+    };
+  }
+
+  @override
+  Future<List<PostModel>> fetchFollowingFeed(
+    String currentUserId, {
+    int limit = 10,
+    int offset = 0,
+  }) async {
+    final follows = await _client
+        .from('follows')
+        .select('followee_id')
+        .eq('follower_id', currentUserId);
+    final ids = (follows as List)
+        .map((e) => e['followee_id'] as String)
+        .toList();
+    if (ids.isEmpty) return [];
+
+    final response = await _client
+        .from('posts')
+        .select(_postSelect)
+        .inFilter('user_id', ids)
+        .order('created_at', ascending: false)
+        .range(offset, offset + limit - 1);
+
+    return (response as List)
+        .map((json) => PostModel.fromJson(json, currentUserId: currentUserId))
+        .toList();
+  }
+
+  // ── Уведомления ──
+
+  @override
+  Future<List<NotificationModel>> fetchNotifications(
+    String userId, {
+    int limit = 50,
+  }) async {
+    final response = await _client
+        .from('notifications')
+        .select('''
+          id, type, post_id, comment_id, is_read, created_at, actor_id,
+          actor:actor_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified)
+        ''')
+        .eq('user_id', userId)
+        .order('created_at', ascending: false)
+        .limit(limit);
+
+    return (response as List)
+        .map((json) => NotificationModel.fromJson(json))
+        .toList();
+  }
+
+  @override
+  Future<int> fetchUnreadNotificationsCount(String userId) async {
+    final response = await _client
+        .from('notifications')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('is_read', false);
+    return (response as List).length;
+  }
+
+  @override
+  Future<void> markNotificationsRead(String userId) async {
+    await _client
+        .from('notifications')
+        .update({'is_read': true})
+        .eq('user_id', userId)
+        .eq('is_read', false);
   }
 }

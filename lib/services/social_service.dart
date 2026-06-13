@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/post_model.dart';
 import '../models/comment_model.dart';
 import '../models/user_model.dart';
+import '../models/notification_model.dart';
 import 'jobs/mock_job_repository.dart';
 import 'auth_service.dart';
 import 'image_upload_service.dart';
@@ -11,10 +12,16 @@ import 'supabase_config.dart';
 import 'social/social_repository.dart';
 import 'social/mock_social_repository.dart';
 import 'social/supabase_social_repository.dart';
+import 'realtime_service.dart';
+import '../utils/app_error.dart';
 
 class SocialService extends ChangeNotifier {
   final AuthService _authService;
   late final SocialRepository _repository;
+  RealtimeService? _realtime;
+
+  int _unreadNotifications = 0;
+  int get unreadNotifications => _unreadNotifications;
 
   List<PostModel> _posts = [];
   bool _isLoading = false;
@@ -44,25 +51,56 @@ class SocialService extends ChangeNotifier {
       _repository = MockSocialRepository();
     } else {
       _repository = SupabaseSocialRepository();
+      // Живое обновление ленты: при изменениях постов/лайков/комментариев
+      // подтягиваем свежие данные (с дебаунсом внутри RealtimeService).
+      _realtime = RealtimeService()
+        ..subscribeToFeed(onChange: _onRealtimeFeedChange);
     }
-    
+
     _authService.addListener(_onAuthStatusChanged);
     if (_authService.currentUser != null) {
       fetchPosts(isRefresh: true);
+      _initNotifications();
     }
   }
 
   void _onAuthStatusChanged() {
     if (_authService.currentUser == null) {
       _posts = [];
+      _unreadNotifications = 0;
+      _realtime?.unsubscribeFromNotifications();
       _safeNotify();
     } else {
       fetchPosts(isRefresh: true);
+      _initNotifications();
     }
+  }
+
+  /// Подгружает счётчик непрочитанных и подписывается на новые уведомления.
+  void _initNotifications() {
+    final me = _authService.currentUser;
+    if (me == null) return;
+    refreshUnreadCount();
+    _realtime?.subscribeToNotifications(
+      userId: me.id,
+      onInsert: (_) {
+        _unreadNotifications++;
+        _safeNotify();
+      },
+    );
+  }
+
+  /// Реакция на realtime-событие в ленте: мягко обновляем, если сейчас не
+  /// идёт загрузка (чтобы не конфликтовать с пагинацией/рефрешем).
+  void _onRealtimeFeedChange() {
+    if (_isLoading || _isLoadingMore) return;
+    if (_authService.currentUser == null) return;
+    fetchPosts(isRefresh: true);
   }
 
   @override
   void dispose() {
+    _realtime?.dispose();
     _authService.removeListener(_onAuthStatusChanged);
     super.dispose();
   }
@@ -580,6 +618,110 @@ class SocialService extends ChangeNotifier {
       _safeNotify();
       _setError(e.toString());
       return false;
+    }
+  }
+
+  // ── Подписки (follows) ──
+
+  Future<bool> followUser(String userId) async {
+    final me = _authService.currentUser;
+    if (me == null || me.id == userId) return false;
+    try {
+      await _repository.followUser(followerId: me.id, followeeId: userId);
+      return true;
+    } catch (e) {
+      _setError(AppError.from(e).message);
+      return false;
+    }
+  }
+
+  Future<bool> unfollowUser(String userId) async {
+    final me = _authService.currentUser;
+    if (me == null) return false;
+    try {
+      await _repository.unfollowUser(followerId: me.id, followeeId: userId);
+      return true;
+    } catch (e) {
+      _setError(AppError.from(e).message);
+      return false;
+    }
+  }
+
+  Future<bool> isFollowing(String userId) async {
+    final me = _authService.currentUser;
+    if (me == null) return false;
+    try {
+      return await _repository.isFollowing(
+        followerId: me.id,
+        followeeId: userId,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<Map<String, int>> fetchFollowCounts(String userId) async {
+    try {
+      return await _repository.fetchFollowCounts(userId);
+    } catch (_) {
+      return {'followers': 0, 'following': 0};
+    }
+  }
+
+  /// Лента «Подписки» — посты тех, на кого подписан текущий пользователь.
+  Future<List<PostModel>> fetchFollowingFeed({
+    int limit = 10,
+    int offset = 0,
+  }) async {
+    final me = _authService.currentUser;
+    if (me == null) return [];
+    try {
+      return await _repository.fetchFollowingFeed(
+        me.id,
+        limit: limit,
+        offset: offset,
+      );
+    } catch (e) {
+      _setError(AppError.from(e).message);
+      return [];
+    }
+  }
+
+  // ── Уведомления ──
+
+  Future<List<NotificationModel>> fetchNotifications() async {
+    final me = _authService.currentUser;
+    if (me == null) return [];
+    try {
+      return await _repository.fetchNotifications(me.id);
+    } catch (e) {
+      _setError(AppError.from(e).message);
+      return [];
+    }
+  }
+
+  Future<void> refreshUnreadCount() async {
+    final me = _authService.currentUser;
+    if (me == null) return;
+    try {
+      _unreadNotifications =
+          await _repository.fetchUnreadNotificationsCount(me.id);
+      _safeNotify();
+    } catch (_) {
+      // тихо игнорируем — бейдж не критичен
+    }
+  }
+
+  /// Помечает все уведомления прочитанными и обнуляет бейдж.
+  Future<void> markNotificationsRead() async {
+    final me = _authService.currentUser;
+    if (me == null) return;
+    _unreadNotifications = 0;
+    _safeNotify();
+    try {
+      await _repository.markNotificationsRead(me.id);
+    } catch (_) {
+      // не критично
     }
   }
 

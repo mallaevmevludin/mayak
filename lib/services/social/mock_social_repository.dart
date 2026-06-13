@@ -2,6 +2,7 @@ import 'dart:async';
 import '../../../models/post_model.dart';
 import '../../../models/comment_model.dart';
 import '../../../models/user_model.dart';
+import '../../../models/notification_model.dart';
 import '../jobs/mock_job_repository.dart';
 import 'social_repository.dart';
 
@@ -373,6 +374,114 @@ class MockSocialRepository implements SocialRepository {
     final userPosts = _mockPostsDb.where((p) => p.userId == userId).toList();
     final totalLikes = userPosts.fold<int>(0, (sum, p) => sum + p.likesCount);
     return {'posts': userPosts.length, 'likes': totalLikes};
+  }
+
+  /// Множество пар «followerId>followeeId».
+  static final Set<String> _mockFollows = {};
+
+  String _followKey(String follower, String followee) => '$follower>$followee';
+
+  @override
+  Future<void> followUser({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+    _mockFollows.add(_followKey(followerId, followeeId));
+  }
+
+  @override
+  Future<void> unfollowUser({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+    _mockFollows.remove(_followKey(followerId, followeeId));
+  }
+
+  @override
+  Future<bool> isFollowing({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 50));
+    return _mockFollows.contains(_followKey(followerId, followeeId));
+  }
+
+  @override
+  Future<Map<String, int>> fetchFollowCounts(String userId) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+    final followers =
+        _mockFollows.where((k) => k.endsWith('>$userId')).length;
+    final following =
+        _mockFollows.where((k) => k.startsWith('$userId>')).length;
+    return {'followers': followers, 'following': following};
+  }
+
+  @override
+  Future<List<PostModel>> fetchFollowingFeed(
+    String currentUserId, {
+    int limit = 10,
+    int offset = 0,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 300));
+    final followedIds = _mockFollows
+        .where((k) => k.startsWith('$currentUserId>'))
+        .map((k) => k.split('>').last)
+        .toSet();
+    var posts = _mockPostsDb
+        .where((p) => followedIds.contains(p.userId))
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    if (offset >= posts.length) return [];
+    final end = (offset + limit).clamp(0, posts.length);
+    return posts.sublist(offset, end);
+  }
+
+  @override
+  Future<List<NotificationModel>> fetchNotifications(
+    String userId, {
+    int limit = 50,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    // В mock-режиме показываем демо-уведомления от других пользователей.
+    return [
+      NotificationModel(
+        id: 1,
+        type: NotificationType.follow,
+        actorId: _mockProfiles[1].id,
+        actorName:
+            '${_mockProfiles[1].firstName} ${_mockProfiles[1].lastName}',
+        actorUsername: _mockProfiles[1].username,
+        actorEmojiAvatar: _mockProfiles[1].emojiAvatar,
+        actorIsVerified: _mockProfiles[1].isVerified,
+        createdAt: DateTime.now().subtract(const Duration(minutes: 20)),
+      ),
+      NotificationModel(
+        id: 2,
+        type: NotificationType.like,
+        actorId: _mockProfiles[2].id,
+        actorName:
+            '${_mockProfiles[2].firstName} ${_mockProfiles[2].lastName}',
+        actorUsername: _mockProfiles[2].username,
+        actorEmojiAvatar: _mockProfiles[2].emojiAvatar,
+        actorIsVerified: _mockProfiles[2].isVerified,
+        postId: 1,
+        isRead: true,
+        createdAt: DateTime.now().subtract(const Duration(hours: 2)),
+      ),
+    ];
+  }
+
+  @override
+  Future<int> fetchUnreadNotificationsCount(String userId) async {
+    await Future.delayed(const Duration(milliseconds: 50));
+    return 1;
+  }
+
+  @override
+  Future<void> markNotificationsRead(String userId) async {
+    await Future.delayed(const Duration(milliseconds: 100));
   }
 
   @override

@@ -6,6 +6,7 @@ import '../services/social_service.dart';
 import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_empty_state.dart';
 import 'user_profile_screen.dart';
 import '../widgets/user_avatar.dart';
 
@@ -259,40 +260,11 @@ class _SearchViewState extends State<SearchView> {
   }
 
   Widget _buildEmptyState(bool isDark) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 40.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.search_off_rounded,
-              size: 52,
-              color: isDark ? Colors.white24 : Colors.black12,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Ничего не найдено',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: isDark ? Colors.white70 : Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Попробуйте изменить запрос или введите @имя_пользователя для точного поиска.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                color: isDark
-                    ? AppTheme.textSecondaryDark
-                    : AppTheme.textSecondaryLight,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return const AppEmptyState(
+      icon: Icons.search_off_rounded,
+      title: 'Ничего не найдено',
+      subtitle:
+          'Попробуйте изменить запрос или введите @имя_пользователя для точного поиска.',
     );
   }
 }

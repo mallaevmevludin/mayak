@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/job_service.dart';
 import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_empty_state.dart';
 import '../widgets/app_header.dart';
 import '../widgets/job_card.dart';
 import '../widgets/skeleton_item.dart';
@@ -364,62 +365,14 @@ class _JobsViewState extends State<JobsView> {
   Widget _buildEmptyState(bool isDark) {
     return SliverFillRemaining(
       hasScrollBody: false,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 48.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.work_outline_rounded,
-                  size: 36,
-                  color: AppTheme.primary,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Нет активных заказов',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: isDark ? Colors.white : Colors.black,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _selectedCategory == 'all'
-                    ? 'Будьте первым, кто создаст заказ на фриланс-витрине!'
-                    : 'В этой категории пока нет заказов. Попробуйте выбрать другую или создайте свой!',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
-                ),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
-                onPressed: _showCreateJobSheet,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('Разместить заказ'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+      child: AppEmptyState(
+        icon: Icons.work_outline_rounded,
+        title: 'Нет активных заказов',
+        subtitle: _selectedCategory == 'all'
+            ? 'Будьте первым, кто создаст заказ на фриланс-витрине!'
+            : 'В этой категории пока нет заказов. Попробуйте выбрать другую или создайте свой!',
+        actionLabel: 'Разместить заказ',
+        onAction: _showCreateJobSheet,
       ),
     );
   }

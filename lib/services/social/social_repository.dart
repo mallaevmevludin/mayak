@@ -1,6 +1,7 @@
 import '../../../models/post_model.dart';
 import '../../../models/comment_model.dart';
 import '../../../models/user_model.dart';
+import '../../../models/notification_model.dart';
 
 abstract class SocialRepository {
   Future<List<PostModel>> fetchPosts(String? currentUserId, {int limit = 10, int offset = 0, String? tag});
@@ -64,4 +65,45 @@ abstract class SocialRepository {
     required String userId,
     required int optionIndex,
   });
+
+  // ── Подписки (follows) ──
+
+  /// Подписаться: [followerId] начинает следить за [followeeId].
+  Future<void> followUser({
+    required String followerId,
+    required String followeeId,
+  });
+
+  /// Отписаться.
+  Future<void> unfollowUser({
+    required String followerId,
+    required String followeeId,
+  });
+
+  /// Подписан ли [followerId] на [followeeId].
+  Future<bool> isFollowing({
+    required String followerId,
+    required String followeeId,
+  });
+
+  /// Кол-во подписчиков и подписок пользователя: `{'followers': x, 'following': y}`.
+  Future<Map<String, int>> fetchFollowCounts(String userId);
+
+  /// Лента из постов тех, на кого подписан [currentUserId] (вкладка «Подписки»).
+  Future<List<PostModel>> fetchFollowingFeed(
+    String currentUserId, {
+    int limit = 10,
+    int offset = 0,
+  });
+
+  // ── Уведомления ──
+
+  Future<List<NotificationModel>> fetchNotifications(
+    String userId, {
+    int limit = 50,
+  });
+
+  Future<int> fetchUnreadNotificationsCount(String userId);
+
+  Future<void> markNotificationsRead(String userId);
 }

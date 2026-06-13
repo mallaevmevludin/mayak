@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/post_model.dart';
 import '../services/social_service.dart';
 import '../services/auth_service.dart';
 import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_empty_state.dart';
 import '../widgets/app_header.dart';
 import '../widgets/post_card.dart';
 import '../widgets/sliding_segmented_control.dart';
 import '../widgets/skeleton_item.dart';
 import 'create_post_sheet.dart';
+import 'notifications_screen.dart';
 
 class SocialFeedScreen extends StatefulWidget {
   const SocialFeedScreen({super.key});
@@ -18,9 +21,24 @@ class SocialFeedScreen extends StatefulWidget {
 }
 
 class _SocialFeedScreenState extends State<SocialFeedScreen> {
-  int _selectedTab = 0; // 0 = Лента, 1 = Популярное
+  int _selectedTab = 0; // 0 = Лента, 1 = Популярное, 2 = Подписки
   final ScrollController _scrollController = ScrollController();
   double _appBarOpacity = 0.0;
+
+  // Вкладка «Подписки» (отдельный источник данных).
+  List<PostModel> _followingPosts = [];
+  bool _followingLoading = false;
+
+  Future<void> _loadFollowing() async {
+    setState(() => _followingLoading = true);
+    final posts = await Provider.of<SocialService>(context, listen: false)
+        .fetchFollowingFeed(limit: 30);
+    if (!mounted) return;
+    setState(() {
+      _followingPosts = posts;
+      _followingLoading = false;
+    });
+  }
 
   @override
   void initState() {
@@ -54,7 +72,12 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
   }
 
   Future<void> _refresh() async {
-    await Provider.of<SocialService>(context, listen: false).fetchPosts(isRefresh: true);
+    if (_selectedTab == 2) {
+      await _loadFollowing();
+    } else {
+      await Provider.of<SocialService>(context, listen: false)
+          .fetchPosts(isRefresh: true);
+    }
   }
 
   @override
@@ -63,10 +86,19 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
     final isDark = theme.brightness == Brightness.dark;
     final socialService = Provider.of<SocialService>(context);
 
-    // Sort posts by tab: 0 = recent, 1 = most liked
-    List posts = List.from(socialService.posts);
-    if (_selectedTab == 1) {
-      posts.sort((a, b) => b.likesCount.compareTo(a.likesCount));
+    // Источник постов по вкладке: 0 = свежее, 1 = популярное, 2 = подписки
+    final bool isFollowingTab = _selectedTab == 2;
+    List posts;
+    final bool tabLoading;
+    if (isFollowingTab) {
+      posts = List.from(_followingPosts);
+      tabLoading = _followingLoading;
+    } else {
+      posts = List.from(socialService.posts);
+      if (_selectedTab == 1) {
+        posts.sort((a, b) => b.likesCount.compareTo(a.likesCount));
+      }
+      tabLoading = socialService.isLoading;
     }
 
     return Scaffold(
@@ -116,6 +148,7 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
                 ),
               ),
               actions: [
+                _buildNotificationsButton(socialService.unreadNotifications),
                 Padding(
                   padding: const EdgeInsets.only(right: AppSpacing.sm),
                   child: AppHeaderAction(
@@ -131,12 +164,15 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
                 child: SlidingSegmentedControl(
-                  children: const ['Лента', 'Популярное'],
+                  children: const ['Лента', 'Популярное', 'Подписки'],
                   selectedIndex: _selectedTab,
                   onValueChanged: (index) {
                     setState(() {
                       _selectedTab = index;
                     });
+                    if (index == 2 && _followingPosts.isEmpty) {
+                      _loadFollowing();
+                    }
                   },
                 ),
               ),
@@ -219,7 +255,7 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
               ),
 
             // ── Posts ──
-            if (socialService.isLoading && socialService.posts.isEmpty)
+            if (tabLoading && posts.isEmpty)
               SliverList(
                 delegate: SliverChildBuilderDelegate((context, index) {
                   return Padding(
@@ -230,37 +266,18 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
               )
             else if (posts.isEmpty)
               SliverFillRemaining(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.forum_outlined,
-                        size: 56,
-                        color: isDark ? Colors.white12 : Colors.black12,
+                child: isFollowingTab
+                    ? const AppEmptyState(
+                        icon: Icons.group_outlined,
+                        title: 'Здесь будут посты ваших подписок',
+                        subtitle:
+                            'Подпишитесь на людей в поиске или их профилях — и их посты появятся тут.',
+                      )
+                    : const AppEmptyState(
+                        icon: Icons.forum_outlined,
+                        title: 'Постов пока нет',
+                        subtitle: 'Напишите что-нибудь первым!',
                       ),
-                      const SizedBox(height: 14),
-                      Text(
-                        'Постов пока нет',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: isDark
-                              ? AppTheme.textSecondaryDark
-                              : AppTheme.textSecondaryLight,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Напишите что-нибудь первым!',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: isDark ? Colors.white24 : Colors.black26,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               )
             else
               SliverList(
@@ -302,6 +319,48 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  void _openNotifications() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+    );
+  }
+
+  Widget _buildNotificationsButton(int unread) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        AppHeaderAction(
+          icon: Icons.notifications_none_rounded,
+          onTap: _openNotifications,
+        ),
+        if (unread > 0)
+          Positioned(
+            right: 2,
+            top: -2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              constraints: const BoxConstraints(minWidth: 16),
+              decoration: BoxDecoration(
+                color: AppTheme.error,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                border: Border.all(color: context.appBg, width: 1.5),
+              ),
+              child: Text(
+                unread > 99 ? '99+' : '$unread',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

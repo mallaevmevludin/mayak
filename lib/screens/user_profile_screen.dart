@@ -5,6 +5,7 @@ import '../models/user_model.dart';
 import '../models/post_model.dart';
 import '../services/social_service.dart';
 import '../services/auth_service.dart';
+import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
 import '../widgets/post_card.dart';
 import '../widgets/user_avatar.dart';
@@ -23,6 +24,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
   UserModel? _user;
   List<PostModel> _userPosts = [];
   Map<String, int> _stats = {'posts': 0, 'likes': 0};
+  Map<String, int> _followCounts = {'followers': 0, 'following': 0};
+  bool _isFollowing = false;
+  bool _followBusy = false;
   bool _isLoading = true;
   late TabController _tabController;
 
@@ -41,24 +45,55 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
 
   Future<void> _loadProfile() async {
     final socialService = Provider.of<SocialService>(context, listen: false);
+    final me = Provider.of<AuthService>(context, listen: false).currentUser;
+    final isOwn = me?.id == widget.userId;
 
-    debugPrint('UserProfileScreen: Loading profile for userId: ${widget.userId}');
     final results = await Future.wait([
       socialService.fetchUserProfile(widget.userId),
       socialService.fetchUserPosts(widget.userId),
       socialService.fetchUserStats(widget.userId),
+      socialService.fetchFollowCounts(widget.userId),
+      if (!isOwn) socialService.isFollowing(widget.userId),
     ]);
 
     if (mounted) {
-      final fetchedUser = results[0] as UserModel?;
-      debugPrint('UserProfileScreen: Fetched user: ${fetchedUser?.username}, biography: "${fetchedUser?.biography}", interests: ${fetchedUser?.interests}');
       setState(() {
-        _user = fetchedUser;
+        _user = results[0] as UserModel?;
         _userPosts = results[1] as List<PostModel>;
         _stats = results[2] as Map<String, int>;
+        _followCounts = results[3] as Map<String, int>;
+        _isFollowing = isOwn ? false : results[4] as bool;
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _toggleFollow() async {
+    if (_followBusy) return;
+    final social = Provider.of<SocialService>(context, listen: false);
+
+    // Оптимистично переключаем.
+    setState(() {
+      _followBusy = true;
+      _isFollowing = !_isFollowing;
+      _followCounts['followers'] =
+          (_followCounts['followers'] ?? 0) + (_isFollowing ? 1 : -1);
+    });
+
+    final ok = _isFollowing
+        ? await social.followUser(widget.userId)
+        : await social.unfollowUser(widget.userId);
+
+    if (!mounted) return;
+    setState(() {
+      if (!ok) {
+        // Откат при ошибке.
+        _isFollowing = !_isFollowing;
+        _followCounts['followers'] =
+            (_followCounts['followers'] ?? 0) + (_isFollowing ? 1 : -1);
+      }
+      _followBusy = false;
+    });
   }
 
   @override
@@ -218,13 +253,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
+                  _buildHeaderStat('${_stats['posts'] ?? 0}', 'Посты'),
                   _buildHeaderStat(
-                    '${_stats['posts'] ?? 0}',
-                    'Посты',
+                    '${_followCounts['followers'] ?? 0}',
+                    'Подписчики',
                   ),
                   _buildHeaderStat(
-                    '${_stats['likes'] ?? 0}',
-                    'Лайки',
+                    '${_followCounts['following'] ?? 0}',
+                    'Подписки',
                   ),
                 ],
               ),
@@ -284,7 +320,37 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
           ),
           const SizedBox(height: 12),
         ],
+        if (!isOwnProfile) _buildFollowButton(isDark),
       ],
+    );
+  }
+
+  Widget _buildFollowButton(bool isDark) {
+    final following = _isFollowing;
+    return SizedBox(
+      width: double.infinity,
+      child: following
+          ? OutlinedButton(
+              onPressed: _followBusy ? null : _toggleFollow,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: context.appTextPrimary,
+                side: BorderSide(color: context.appCardBorder, width: 1),
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                shape: RoundedRectangleBorder(borderRadius: AppRadius.controlR),
+              ),
+              child: const Text('Вы подписаны'),
+            )
+          : ElevatedButton(
+              onPressed: _followBusy ? null : _toggleFollow,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                shape: RoundedRectangleBorder(borderRadius: AppRadius.controlR),
+              ),
+              child: const Text('Подписаться'),
+            ),
     );
   }
 
