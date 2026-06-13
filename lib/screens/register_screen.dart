@@ -386,10 +386,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 isValidated: _isFirstNameValid,
                 onChanged: (val) => _checkStep1Validations(),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
+                  if (val == null || val.trim().isEmpty) {
                     return 'Имя обязательно';
-                  if (!_nameRegex.hasMatch(val.trim()))
+                  }
+                  if (!_nameRegex.hasMatch(val.trim())) {
                     return 'Имя должно содержать 2-30 букв';
+                  }
                   return null;
                 },
               ),
@@ -402,10 +404,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 isValidated: _isLastNameValid,
                 onChanged: (val) => _checkStep1Validations(),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
+                  if (val == null || val.trim().isEmpty) {
                     return 'Фамилия обязательна';
-                  if (!_nameRegex.hasMatch(val.trim()))
+                  }
+                  if (!_nameRegex.hasMatch(val.trim())) {
                     return 'Фамилия должна содержать 2-30 букв';
+                  }
                   return null;
                 },
               ),
@@ -432,8 +436,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 isValidated: _isUsernameValid,
                 onChanged: (val) => _checkStep2Validations(),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
+                  if (val == null || val.trim().isEmpty) {
                     return 'Логин обязателен';
+                  }
                   if (!_usernameRegex.hasMatch(val.trim())) {
                     return '3-20 символов: латиница, цифры и _';
                   }
@@ -450,10 +455,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 isValidated: _isEmailValid,
                 onChanged: (val) => _checkStep2Validations(),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
+                  if (val == null || val.trim().isEmpty) {
                     return 'Почта обязательна';
-                  if (!_emailRegex.hasMatch(val.trim()))
+                  }
+                  if (!_emailRegex.hasMatch(val.trim())) {
                     return 'Введите корректный email';
+                  }
                   return null;
                 },
               ),
@@ -472,8 +479,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     return 'Номер телефона обязателен';
                   }
                   final digits = val.replaceAll(RegExp(r'\D'), '');
-                  if (digits.length != 11)
+                  if (digits.length != 11) {
                     return 'Введите полный номер телефона';
+                  }
                   return null;
                 },
               ),
@@ -516,9 +524,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 isValidated: _isConfirmPasswordValid,
                 onChanged: (val) => _checkStep3Validations(),
                 validator: (val) {
-                  if (val == null || val.isEmpty) return 'Повторите пароль';
-                  if (val != _passwordController.text)
+                  if (val == null || val.isEmpty) {
+                    return 'Повторите пароль';
+                  }
+                  if (val != _passwordController.text) {
                     return 'Пароли не совпадают';
+                  }
                   return null;
                 },
               ),

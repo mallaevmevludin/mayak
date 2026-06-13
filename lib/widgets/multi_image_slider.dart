@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../theme/app_theme.dart';
 
 class MultiImageSlider extends StatefulWidget {
@@ -71,19 +72,16 @@ class _MultiImageSliderState extends State<MultiImageSlider> {
                 itemBuilder: (context, index) {
                   return GestureDetector(
                     onTap: () => _openFullScreenViewer(index),
-                    child: Image.network(
-                      widget.imageUrls[index],
+                    child: CachedNetworkImage(
+                      imageUrl: widget.imageUrls[index],
                       fit: BoxFit.cover,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Center(
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppTheme.primary.withValues(alpha: 0.5),
-                          ),
-                        );
-                      },
-                      errorBuilder: (context, error, stackTrace) => Container(
+                      placeholder: (context, url) => Center(
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppTheme.primary.withValues(alpha: 0.5),
+                        ),
+                      ),
+                      errorWidget: (context, url, error) => Container(
                         color: isDark ? const Color(0xFF1E1E20) : const Color(0xFFE5E5EA),
                         child: Icon(
                           Icons.image_not_supported_outlined,
@@ -184,19 +182,16 @@ class _SwipableFullScreenImageViewerState extends State<SwipableFullScreenImageV
                 minScale: 0.5,
                 maxScale: 4.0,
                 child: Center(
-                  child: Image.network(
-                    widget.imageUrls[index],
+                  child: CachedNetworkImage(
+                    imageUrl: widget.imageUrls[index],
                     fit: BoxFit.contain,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return const Center(
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white70,
-                        ),
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) => const Center(
+                    placeholder: (context, url) => const Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white70,
+                      ),
+                    ),
+                    errorWidget: (context, url, error) => const Center(
                       child: Icon(
                         Icons.error_outline_rounded,
                         color: Colors.white30,

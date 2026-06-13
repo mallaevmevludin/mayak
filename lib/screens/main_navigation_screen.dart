@@ -9,6 +9,7 @@ import 'search_view.dart';
 import 'social_feed_screen.dart';
 import 'jobs_view.dart';
 import '../widgets/scale_on_tap.dart';
+import '../widgets/user_avatar.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -157,10 +158,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     required bool isDark,
   }) {
     final isActive = _selectedIndex == index;
-    final String initial = user != null && user.username.isNotEmpty
-        ? user.username[0].toUpperCase()
-        : '';
-    final String? avatarUrl = user?.avatarUrl;
 
     return ScaleOnTap(
       onTap: () => _onItemTapped(index),
@@ -176,34 +173,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               : Colors.transparent,
         ),
         alignment: Alignment.center,
-        child: avatarUrl != null && avatarUrl.isNotEmpty
-            ? Container(
-                width: 32,
-                height: 32,
-                clipBehavior: Clip.antiAlias,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                ),
-                child: Image.network(
-                  avatarUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => _buildFallbackAvatar(initial, isDark),
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return const Center(
-                      child: SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                           strokeWidth: 1.5,
-                           color: AppTheme.primary,
-                        ),
-                      ),
-                    );
-                  },
-                ),
+        child: user != null
+            ? UserAvatar.fromUsername(
+                username: user.username,
+                avatarUrl: user.avatarUrl,
+                size: 32,
+                showBorder: isActive,
+                borderWidth: 1.0,
               )
-            : _buildFallbackAvatar(initial, isDark),
+            : _buildFallbackAvatar('', isDark),
       ),
     );
   }

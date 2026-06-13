@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user_model.dart';
 import '../services/social_service.dart';
+import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_card.dart';
 import 'user_profile_screen.dart';
+import '../widgets/user_avatar.dart';
 
 class SearchView extends StatefulWidget {
   const SearchView({super.key});
@@ -17,6 +21,7 @@ class _SearchViewState extends State<SearchView> {
   List<UserModel> _searchResults = [];
   bool _isLoading = false;
   String _lastQuery = '';
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -29,6 +34,7 @@ class _SearchViewState extends State<SearchView> {
   void dispose() {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -51,7 +57,16 @@ class _SearchViewState extends State<SearchView> {
     final query = _searchController.text;
     if (query == _lastQuery) return;
     _lastQuery = query;
-    _performSearch(query);
+
+    if (_debounceTimer?.isActive ?? false) _debounceTimer?.cancel();
+
+    if (query.trim().isEmpty) {
+      _performSearch(query);
+    } else {
+      _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+        _performSearch(query);
+      });
+    }
   }
 
   Future<void> _performSearch(String query) async {
@@ -97,20 +112,16 @@ class _SearchViewState extends State<SearchView> {
             // Search Input Field
             Padding(
               padding: const EdgeInsets.symmetric(
-                horizontal: 20.0,
-                vertical: 8.0,
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.sm,
               ),
               child: Container(
                 decoration: BoxDecoration(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.05)
-                      : Colors.black.withValues(alpha: 0.04),
-                  borderRadius: BorderRadius.circular(16),
+                  color: isDark ? AppTheme.darkSurface : AppTheme.lightSurface,
+                  borderRadius: AppRadius.cardR,
                   border: Border.all(
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.08)
-                        : Colors.black.withValues(alpha: 0.05),
-                    width: 1,
+                    color: context.appCardBorder,
+                    width: 0.5,
                   ),
                 ),
                 child: TextField(
@@ -171,59 +182,28 @@ class _SearchViewState extends State<SearchView> {
   Widget _buildResultsList(bool isDark) {
     return ListView.builder(
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.sm,
+        AppSpacing.lg,
+        AppSpacing.bottomNavClearance,
+      ),
       itemCount: _searchResults.length,
       itemBuilder: (context, index) {
         final user = _searchResults[index];
-        final initial = user.username.isNotEmpty
-            ? user.username[0].toUpperCase()
-            : 'U';
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          decoration: BoxDecoration(
-            color: isDark ? AppTheme.darkSurface : Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.06)
-                  : Colors.black.withValues(alpha: 0.04),
-              width: 0.8,
-            ),
-            boxShadow: isDark
-                ? []
-                : [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.02),
-                      blurRadius: 10,
-                      spreadRadius: 1,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-          ),
+        return AppCard(
+          margin: const EdgeInsets.only(bottom: AppSpacing.sm + 2),
+          padding: EdgeInsets.zero,
           child: ListTile(
             contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 6,
+              horizontal: AppSpacing.lg,
+              vertical: AppSpacing.xs + 2,
             ),
-            leading: CircleAvatar(
-              radius: 24,
-              backgroundColor: isDark
-                  ? AppTheme.primary.withValues(alpha: 0.15)
-                  : AppTheme.primary.withValues(alpha: 0.08),
-              backgroundImage: (user.avatarUrl != null && user.avatarUrl!.isNotEmpty)
-                  ? NetworkImage(user.avatarUrl!)
-                  : null,
-              child: (user.avatarUrl != null && user.avatarUrl!.isNotEmpty)
-                  ? null
-                  : Text(
-                      initial,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.primary,
-                        fontSize: 16,
-                      ),
-                    ),
+            leading: UserAvatar.fromUsername(
+              username: user.username,
+              avatarUrl: user.avatarUrl,
+              size: 48,
             ),
             title: Row(
               children: [

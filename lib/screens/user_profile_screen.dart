@@ -7,6 +7,7 @@ import '../services/social_service.dart';
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/post_card.dart';
+import '../widgets/user_avatar.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final String userId;
@@ -98,47 +99,52 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
               headerSliverBuilder: (context, innerBoxIsScrolled) {
                 return [
                   SliverAppBar(
-                    expandedHeight: 100,
                     floating: false,
                     pinned: true,
-                    backgroundColor: Colors.transparent,
+                    backgroundColor: isDark ? AppTheme.darkBg : AppTheme.lightBg,
                     elevation: 0,
                     surfaceTintColor: Colors.transparent,
                     leading: IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                      icon: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 18,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
                       onPressed: () => Navigator.pop(context),
                     ),
-                    flexibleSpace: FlexibleSpaceBar(
-                      titlePadding: const EdgeInsets.only(left: 52, bottom: 10),
-                      title: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 5,
+                    title: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark ? AppTheme.darkSurface : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isDark ? AppTheme.cardBorderDark : AppTheme.cardBorderLight,
+                          width: 0.5,
                         ),
-                        decoration: BoxDecoration(
-                          color: isDark ? AppTheme.darkSurface : Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(
-                                alpha: isDark ? 0.25 : 0.04,
-                              ),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.25 : 0.04,
                             ),
-                          ],
-                        ),
-                        child: Text(
-                          '@${_user!.username}',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: isDark ? Colors.white : Colors.black,
-                            letterSpacing: -0.5,
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
                           ),
+                        ],
+                      ),
+                      child: Text(
+                        '@${_user!.username}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: isDark ? Colors.white : Colors.black,
+                          letterSpacing: -0.3,
                         ),
                       ),
                     ),
+                    centerTitle: true,
                   ),
                   SliverToBoxAdapter(
                     child: Padding(
@@ -162,11 +168,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
                           Tab(text: 'Посты'),
                           Tab(text: 'Инфо'),
                         ],
-                        labelColor: AppTheme.primary,
+                        labelColor: Colors.white,
                         unselectedLabelColor: isDark ? Colors.white60 : Colors.black54,
-                        indicatorColor: AppTheme.primary,
+                        indicator: BoxDecoration(
+                          color: AppTheme.primary,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                         indicatorSize: TabBarIndicatorSize.tab,
-                        dividerColor: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05),
+                        dividerColor: Colors.transparent,
+                        labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                       ),
                     ),
                   ),
@@ -193,56 +204,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
           children: [
             Hero(
               tag: widget.heroTag ?? 'avatar-profile-${widget.userId}',
-              child: Container(
-                width: 92,
-                height: 92,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isDark ? AppTheme.darkBg : Colors.white,
-                  border: Border.all(
-                    color: isDark ? Colors.white24 : Colors.black12,
-                    width: 1.5,
-                  ),
-                ),
-                padding: const EdgeInsets.all(4),
-                child: (_user!.avatarUrl != null && _user!.avatarUrl!.isNotEmpty)
-                    ? ClipOval(
-                        child: Image.network(
-                          _user!.avatarUrl!,
-                          width: 84,
-                          height: 84,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return const Center(
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.5,
-                                color: AppTheme.primary,
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) => Center(
-                            child: Text(
-                              '${_user!.firstName.isNotEmpty ? _user!.firstName[0].toUpperCase() : ''}${_user!.lastName.isNotEmpty ? _user!.lastName[0].toUpperCase() : ''}',
-                              style: const TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.primary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      )
-                    : Center(
-                        child: Text(
-                          '${_user!.firstName.isNotEmpty ? _user!.firstName[0].toUpperCase() : ''}${_user!.lastName.isNotEmpty ? _user!.lastName[0].toUpperCase() : ''}',
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.primary,
-                          ),
-                        ),
-                      ),
+              child: UserAvatar.fromName(
+                avatarUrl: _user!.avatarUrl,
+                firstName: _user!.firstName,
+                lastName: _user!.lastName,
+                size: 92,
+                showBorder: true,
+                borderWidth: 1.5,
               ),
             ),
             const SizedBox(width: 20),
@@ -526,19 +494,28 @@ class _SliverTabBarDelegate extends SliverPersistentHeaderDelegate {
   _SliverTabBarDelegate({required this.tabBar, required this.backgroundColor});
 
   @override
-  double get minExtent => tabBar.preferredSize.height;
+  double get minExtent => tabBar.preferredSize.height + 16;
   @override
-  double get maxExtent => tabBar.preferredSize.height;
+  double get maxExtent => tabBar.preferredSize.height + 16;
 
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ClipRRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
         child: Container(
-          color: backgroundColor.withValues(alpha: 0.85),
-          child: tabBar,
+          color: backgroundColor.withValues(alpha: 0.8),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Container(
+            height: tabBar.preferredSize.height,
+            decoration: BoxDecoration(
+              color: isDark ? AppTheme.cardBorderDark : AppTheme.cardBorderLight.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: tabBar,
+          ),
         ),
       ),
     );
