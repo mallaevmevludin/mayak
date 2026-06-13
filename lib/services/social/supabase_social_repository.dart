@@ -233,18 +233,20 @@ class SupabaseSocialRepository implements SocialRepository {
     }
     if (cleanQuery.isEmpty) return [];
 
-    var req = _client.from('profiles').select();
     if (searchByUsernameOnly) {
-      req = req.ilike('username', '%$cleanQuery%');
-    } else {
-      req = req.or(
-        'username.ilike.%$cleanQuery%,first_name.ilike.%$cleanQuery%,last_name.ilike.%$cleanQuery%',
-      );
+      final response =
+          await _client.from('profiles').select().ilike('username', '%$cleanQuery%').limit(20);
+      return (response as List)
+          .map((json) => UserModel.fromJson(json, ''))
+          .toList();
     }
 
-    final response = await req.limit(20);
-    final List<dynamic> data = response;
-    return data.map((json) => UserModel.fromJson(json, '')).toList();
+    // Полнотекстовый поиск (русский словарь) через RPC search_profiles.
+    final response =
+        await _client.rpc('search_profiles', params: {'q': cleanQuery});
+    return (response as List)
+        .map((json) => UserModel.fromJson(json as Map<String, dynamic>, ''))
+        .toList();
   }
 
   @override

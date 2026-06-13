@@ -23,6 +23,21 @@ class _JobsViewState extends State<JobsView> {
   final ScrollController _scrollController = ScrollController();
   double _appBarOpacity = 0.0;
 
+  // Сортировка: false = новые сначала (как с сервера), true = с оплатой выше.
+  bool _budgetFirst = false;
+
+  List<JobModel> _sortedJobs(List<JobModel> jobs) {
+    if (!_budgetFirst) return jobs;
+    final sorted = List<JobModel>.from(jobs);
+    sorted.sort((a, b) {
+      final aHas = a.budget != null && a.budget!.trim().isNotEmpty;
+      final bHas = b.budget != null && b.budget!.trim().isNotEmpty;
+      if (aHas == bHas) return b.createdAt.compareTo(a.createdAt);
+      return aHas ? -1 : 1;
+    });
+    return sorted;
+  }
+
   // Filter state fields
   String? _locationType;
   String? _city;
@@ -382,8 +397,7 @@ class _JobsViewState extends State<JobsView> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final jobService = Provider.of<JobService>(context);
-
-
+    final displayedJobs = _sortedJobs(jobService.jobs);
 
     // List of categories for chips
     final filterCategories = [
@@ -442,6 +456,13 @@ class _JobsViewState extends State<JobsView> {
                 ),
               ),
               actions: [
+                AppHeaderAction(
+                  icon: Icons.sort_rounded,
+                  onTap: () => setState(() => _budgetFirst = !_budgetFirst),
+                  iconColor: _budgetFirst
+                      ? AppTheme.primary
+                      : context.appTextSecondary,
+                ),
                 AppHeaderAction(
                   icon: Icons.filter_list_rounded,
                   onTap: _showFilterSheet,
@@ -529,7 +550,7 @@ class _JobsViewState extends State<JobsView> {
                 sliver: SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
-                      final job = jobService.jobs[index];
+                      final job = displayedJobs[index];
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12.0),
                         child: JobCard(
@@ -545,7 +566,7 @@ class _JobsViewState extends State<JobsView> {
                         ),
                       );
                     },
-                    childCount: jobService.jobs.length,
+                    childCount: displayedJobs.length,
                   ),
                 ),
               ),

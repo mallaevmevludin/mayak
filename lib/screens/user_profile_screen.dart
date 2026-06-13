@@ -5,9 +5,11 @@ import '../models/user_model.dart';
 import '../models/post_model.dart';
 import '../services/social_service.dart';
 import '../services/auth_service.dart';
+import '../services/chat_service.dart';
 import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
 import '../widgets/post_card.dart';
+import 'chat_screen.dart';
 import '../widgets/user_avatar.dart';
 
 class UserProfileScreen extends StatefulWidget {
@@ -320,37 +322,77 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
           ),
           const SizedBox(height: 12),
         ],
-        if (!isOwnProfile) _buildFollowButton(isDark),
+        if (!isOwnProfile) _buildActionButtons(isDark),
       ],
     );
   }
 
-  Widget _buildFollowButton(bool isDark) {
+  Future<void> _openChat() async {
+    final chat = Provider.of<ChatService>(context, listen: false);
+    final navigator = Navigator.of(context);
+    final convId = await chat.openDirectConversation(widget.userId);
+    if (!mounted || convId == null || _user == null) return;
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          conversationId: convId,
+          otherName: '${_user!.firstName} ${_user!.lastName}'.trim(),
+          otherUsername: _user!.username,
+          otherAvatarUrl: _user!.avatarUrl,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButtons(bool isDark) {
     final following = _isFollowing;
-    return SizedBox(
-      width: double.infinity,
-      child: following
-          ? OutlinedButton(
-              onPressed: _followBusy ? null : _toggleFollow,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: context.appTextPrimary,
-                side: BorderSide(color: context.appCardBorder, width: 1),
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-                shape: RoundedRectangleBorder(borderRadius: AppRadius.controlR),
-              ),
-              child: const Text('Вы подписаны'),
-            )
-          : ElevatedButton(
-              onPressed: _followBusy ? null : _toggleFollow,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-                shape: RoundedRectangleBorder(borderRadius: AppRadius.controlR),
-              ),
-              child: const Text('Подписаться'),
+    return Row(
+      children: [
+        Expanded(
+          child: following
+              ? OutlinedButton(
+                  onPressed: _followBusy ? null : _toggleFollow,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: context.appTextPrimary,
+                    side: BorderSide(color: context.appCardBorder, width: 1),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: AppRadius.controlR,
+                    ),
+                  ),
+                  child: const Text('Вы подписаны'),
+                )
+              : ElevatedButton(
+                  onPressed: _followBusy ? null : _toggleFollow,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding:
+                        const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: AppRadius.controlR,
+                    ),
+                  ),
+                  child: const Text('Подписаться'),
+                ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        OutlinedButton(
+          onPressed: _openChat,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.primary,
+            side: BorderSide(color: context.appCardBorder, width: 1),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.lg,
+              vertical: AppSpacing.md,
             ),
+            shape: RoundedRectangleBorder(borderRadius: AppRadius.controlR),
+          ),
+          child: const Icon(Icons.mode_comment_outlined, size: 20),
+        ),
+      ],
     );
   }
 

@@ -12,6 +12,7 @@ import '../widgets/sliding_segmented_control.dart';
 import '../widgets/skeleton_item.dart';
 import 'create_post_sheet.dart';
 import 'notifications_screen.dart';
+import 'conversations_screen.dart';
 
 class SocialFeedScreen extends StatefulWidget {
   const SocialFeedScreen({super.key});
@@ -148,6 +149,10 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
                 ),
               ),
               actions: [
+                AppHeaderAction(
+                  icon: Icons.mode_comment_outlined,
+                  onTap: _openConversations,
+                ),
                 _buildNotificationsButton(socialService.unreadNotifications),
                 Padding(
                   padding: const EdgeInsets.only(right: AppSpacing.sm),
@@ -326,6 +331,13 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+    );
+  }
+
+  void _openConversations() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ConversationsScreen()),
     );
   }
 
