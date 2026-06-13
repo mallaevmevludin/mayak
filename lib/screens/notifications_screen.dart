@@ -142,7 +142,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       AppSpacing.bottomNavClearance,
                     ),
                     itemCount: _items.length,
-                    separatorBuilder: (_, __) =>
+                    separatorBuilder: (_, _) =>
                         const SizedBox(height: AppSpacing.xs),
                     itemBuilder: (context, index) =>
                         _buildTile(_items[index]),
