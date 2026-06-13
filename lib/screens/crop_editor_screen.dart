@@ -463,7 +463,7 @@ class _CropEditorScreenState extends State<CropEditorScreen> {
         height: targetH,
       );
     } catch (e) {
-      print('[AVATAR_LOG_ISOLATE] Exception inside isolate: $e');
+      debugPrint('[AVATAR_LOG_ISOLATE] Exception inside isolate: $e');
       rethrow;
     }
   }

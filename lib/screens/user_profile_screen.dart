@@ -5,8 +5,12 @@ import '../models/user_model.dart';
 import '../models/post_model.dart';
 import '../services/social_service.dart';
 import '../services/auth_service.dart';
+import '../services/chat_service.dart';
+import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
 import '../widgets/post_card.dart';
+import 'chat_screen.dart';
+import '../widgets/user_avatar.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final String userId;
@@ -22,6 +26,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
   UserModel? _user;
   List<PostModel> _userPosts = [];
   Map<String, int> _stats = {'posts': 0, 'likes': 0};
+  Map<String, int> _followCounts = {'followers': 0, 'following': 0};
+  bool _isFollowing = false;
+  bool _followBusy = false;
   bool _isLoading = true;
   late TabController _tabController;
 
@@ -40,24 +47,55 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
 
   Future<void> _loadProfile() async {
     final socialService = Provider.of<SocialService>(context, listen: false);
+    final me = Provider.of<AuthService>(context, listen: false).currentUser;
+    final isOwn = me?.id == widget.userId;
 
-    debugPrint('UserProfileScreen: Loading profile for userId: ${widget.userId}');
     final results = await Future.wait([
       socialService.fetchUserProfile(widget.userId),
       socialService.fetchUserPosts(widget.userId),
       socialService.fetchUserStats(widget.userId),
+      socialService.fetchFollowCounts(widget.userId),
+      if (!isOwn) socialService.isFollowing(widget.userId),
     ]);
 
     if (mounted) {
-      final fetchedUser = results[0] as UserModel?;
-      debugPrint('UserProfileScreen: Fetched user: ${fetchedUser?.username}, biography: "${fetchedUser?.biography}", interests: ${fetchedUser?.interests}');
       setState(() {
-        _user = fetchedUser;
+        _user = results[0] as UserModel?;
         _userPosts = results[1] as List<PostModel>;
         _stats = results[2] as Map<String, int>;
+        _followCounts = results[3] as Map<String, int>;
+        _isFollowing = isOwn ? false : results[4] as bool;
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _toggleFollow() async {
+    if (_followBusy) return;
+    final social = Provider.of<SocialService>(context, listen: false);
+
+    // Оптимистично переключаем.
+    setState(() {
+      _followBusy = true;
+      _isFollowing = !_isFollowing;
+      _followCounts['followers'] =
+          (_followCounts['followers'] ?? 0) + (_isFollowing ? 1 : -1);
+    });
+
+    final ok = _isFollowing
+        ? await social.followUser(widget.userId)
+        : await social.unfollowUser(widget.userId);
+
+    if (!mounted) return;
+    setState(() {
+      if (!ok) {
+        // Откат при ошибке.
+        _isFollowing = !_isFollowing;
+        _followCounts['followers'] =
+            (_followCounts['followers'] ?? 0) + (_isFollowing ? 1 : -1);
+      }
+      _followBusy = false;
+    });
   }
 
   @override
@@ -98,47 +136,52 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
               headerSliverBuilder: (context, innerBoxIsScrolled) {
                 return [
                   SliverAppBar(
-                    expandedHeight: 100,
                     floating: false,
                     pinned: true,
-                    backgroundColor: Colors.transparent,
+                    backgroundColor: isDark ? AppTheme.darkBg : AppTheme.lightBg,
                     elevation: 0,
                     surfaceTintColor: Colors.transparent,
                     leading: IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                      icon: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 18,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
                       onPressed: () => Navigator.pop(context),
                     ),
-                    flexibleSpace: FlexibleSpaceBar(
-                      titlePadding: const EdgeInsets.only(left: 52, bottom: 10),
-                      title: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 5,
+                    title: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark ? AppTheme.darkSurface : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isDark ? AppTheme.cardBorderDark : AppTheme.cardBorderLight,
+                          width: 0.5,
                         ),
-                        decoration: BoxDecoration(
-                          color: isDark ? AppTheme.darkSurface : Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(
-                                alpha: isDark ? 0.25 : 0.04,
-                              ),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.25 : 0.04,
                             ),
-                          ],
-                        ),
-                        child: Text(
-                          '@${_user!.username}',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: isDark ? Colors.white : Colors.black,
-                            letterSpacing: -0.5,
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
                           ),
+                        ],
+                      ),
+                      child: Text(
+                        '@${_user!.username}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: isDark ? Colors.white : Colors.black,
+                          letterSpacing: -0.3,
                         ),
                       ),
                     ),
+                    centerTitle: true,
                   ),
                   SliverToBoxAdapter(
                     child: Padding(
@@ -162,11 +205,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
                           Tab(text: 'Посты'),
                           Tab(text: 'Инфо'),
                         ],
-                        labelColor: AppTheme.primary,
+                        labelColor: Colors.white,
                         unselectedLabelColor: isDark ? Colors.white60 : Colors.black54,
-                        indicatorColor: AppTheme.primary,
+                        indicator: BoxDecoration(
+                          color: AppTheme.primary,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                         indicatorSize: TabBarIndicatorSize.tab,
-                        dividerColor: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05),
+                        dividerColor: Colors.transparent,
+                        labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                       ),
                     ),
                   ),
@@ -193,56 +241,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
           children: [
             Hero(
               tag: widget.heroTag ?? 'avatar-profile-${widget.userId}',
-              child: Container(
-                width: 92,
-                height: 92,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isDark ? AppTheme.darkBg : Colors.white,
-                  border: Border.all(
-                    color: isDark ? Colors.white24 : Colors.black12,
-                    width: 1.5,
-                  ),
-                ),
-                padding: const EdgeInsets.all(4),
-                child: (_user!.avatarUrl != null && _user!.avatarUrl!.isNotEmpty)
-                    ? ClipOval(
-                        child: Image.network(
-                          _user!.avatarUrl!,
-                          width: 84,
-                          height: 84,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return const Center(
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.5,
-                                color: AppTheme.primary,
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) => Center(
-                            child: Text(
-                              '${_user!.firstName.isNotEmpty ? _user!.firstName[0].toUpperCase() : ''}${_user!.lastName.isNotEmpty ? _user!.lastName[0].toUpperCase() : ''}',
-                              style: const TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.primary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      )
-                    : Center(
-                        child: Text(
-                          '${_user!.firstName.isNotEmpty ? _user!.firstName[0].toUpperCase() : ''}${_user!.lastName.isNotEmpty ? _user!.lastName[0].toUpperCase() : ''}',
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.primary,
-                          ),
-                        ),
-                      ),
+              child: UserAvatar.fromName(
+                avatarUrl: _user!.avatarUrl,
+                firstName: _user!.firstName,
+                lastName: _user!.lastName,
+                size: 92,
+                showBorder: true,
+                borderWidth: 1.5,
               ),
             ),
             const SizedBox(width: 20),
@@ -250,13 +255,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
+                  _buildHeaderStat('${_stats['posts'] ?? 0}', 'Посты'),
                   _buildHeaderStat(
-                    '${_stats['posts'] ?? 0}',
-                    'Посты',
+                    '${_followCounts['followers'] ?? 0}',
+                    'Подписчики',
                   ),
                   _buildHeaderStat(
-                    '${_stats['likes'] ?? 0}',
-                    'Лайки',
+                    '${_followCounts['following'] ?? 0}',
+                    'Подписки',
                   ),
                 ],
               ),
@@ -316,6 +322,76 @@ class _UserProfileScreenState extends State<UserProfileScreen> with SingleTicker
           ),
           const SizedBox(height: 12),
         ],
+        if (!isOwnProfile) _buildActionButtons(isDark),
+      ],
+    );
+  }
+
+  Future<void> _openChat() async {
+    final chat = Provider.of<ChatService>(context, listen: false);
+    final navigator = Navigator.of(context);
+    final convId = await chat.openDirectConversation(widget.userId);
+    if (!mounted || convId == null || _user == null) return;
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          conversationId: convId,
+          otherName: '${_user!.firstName} ${_user!.lastName}'.trim(),
+          otherUsername: _user!.username,
+          otherAvatarUrl: _user!.avatarUrl,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButtons(bool isDark) {
+    final following = _isFollowing;
+    return Row(
+      children: [
+        Expanded(
+          child: following
+              ? OutlinedButton(
+                  onPressed: _followBusy ? null : _toggleFollow,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: context.appTextPrimary,
+                    side: BorderSide(color: context.appCardBorder, width: 1),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: AppRadius.controlR,
+                    ),
+                  ),
+                  child: const Text('Вы подписаны'),
+                )
+              : ElevatedButton(
+                  onPressed: _followBusy ? null : _toggleFollow,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding:
+                        const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: AppRadius.controlR,
+                    ),
+                  ),
+                  child: const Text('Подписаться'),
+                ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        OutlinedButton(
+          onPressed: _openChat,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.primary,
+            side: BorderSide(color: context.appCardBorder, width: 1),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.lg,
+              vertical: AppSpacing.md,
+            ),
+            shape: RoundedRectangleBorder(borderRadius: AppRadius.controlR),
+          ),
+          child: const Icon(Icons.mode_comment_outlined, size: 20),
+        ),
       ],
     );
   }
@@ -526,19 +602,28 @@ class _SliverTabBarDelegate extends SliverPersistentHeaderDelegate {
   _SliverTabBarDelegate({required this.tabBar, required this.backgroundColor});
 
   @override
-  double get minExtent => tabBar.preferredSize.height;
+  double get minExtent => tabBar.preferredSize.height + 16;
   @override
-  double get maxExtent => tabBar.preferredSize.height;
+  double get maxExtent => tabBar.preferredSize.height + 16;
 
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ClipRRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
         child: Container(
-          color: backgroundColor.withValues(alpha: 0.85),
-          child: tabBar,
+          color: backgroundColor.withValues(alpha: 0.8),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Container(
+            height: tabBar.preferredSize.height,
+            decoration: BoxDecoration(
+              color: isDark ? AppTheme.cardBorderDark : AppTheme.cardBorderLight.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: tabBar,
+          ),
         ),
       ),
     );

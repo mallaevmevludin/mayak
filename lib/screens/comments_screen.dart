@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../screens/user_profile_screen.dart';
 import '../widgets/mention_text_builder.dart';
 import '../widgets/post_card.dart';
+import '../widgets/user_avatar.dart';
 
 class CommentsScreen extends StatefulWidget {
   final int postId;
@@ -507,72 +508,10 @@ class _CommentsScreenState extends State<CommentsScreen> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: isDark ? AppTheme.darkSurface : Colors.white,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(
-                                  alpha: isDark ? 0.25 : 0.04,
-                                ),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          alignment: Alignment.center,
-                          child: (currentUser?.avatarUrl != null &&
-                                  currentUser!.avatarUrl!.isNotEmpty)
-                              ? ClipOval(
-                                  child: Image.network(
-                                    currentUser.avatarUrl!,
-                                    width: 48,
-                                    height: 48,
-                                    fit: BoxFit.cover,
-                                    loadingBuilder: (context, child, loadingProgress) {
-                                      if (loadingProgress == null) return child;
-                                      return const Center(
-                                        child: SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 1.5,
-                                            color: AppTheme.primary,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Center(
-                                        child: Text(
-                                          currentUser.username.isNotEmpty
-                                              ? currentUser.username[0].toUpperCase()
-                                              : 'U',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: isDark ? Colors.white70 : Colors.black87,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                )
-                              : Text(
-                                  currentUser?.username.isNotEmpty == true
-                                      ? currentUser!.username[0].toUpperCase()
-                                      : 'U',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: isDark
-                                        ? Colors.white70
-                                        : Colors.black87,
-                                  ),
-                                ),
+                        UserAvatar.fromUsername(
+                          username: currentUser?.username ?? 'U',
+                          avatarUrl: currentUser?.avatarUrl,
+                          size: 48,
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -824,10 +763,6 @@ class _CommentBubbleTileState extends State<_CommentBubbleTile>
 
   @override
   Widget build(BuildContext context) {
-    final initial = widget.comment.userUsername.isNotEmpty
-        ? widget.comment.userUsername[0].toUpperCase()
-        : 'U';
-
     final textSecondaryColor = widget.isDark
         ? AppTheme.textSecondaryDark
         : AppTheme.textSecondaryLight;
@@ -868,26 +803,10 @@ class _CommentBubbleTileState extends State<_CommentBubbleTile>
               ),
             GestureDetector(
               onTap: widget.onProfileTap,
-              child: CircleAvatar(
-                radius: 16,
-                backgroundColor: widget.isDark
-                    ? Colors.white.withValues(alpha: 0.08)
-                    : Colors.black.withValues(alpha: 0.04),
-                backgroundImage: (widget.comment.userAvatarUrl != null &&
-                        widget.comment.userAvatarUrl!.isNotEmpty)
-                    ? NetworkImage(widget.comment.userAvatarUrl!)
-                    : null,
-                child: (widget.comment.userAvatarUrl != null &&
-                        widget.comment.userAvatarUrl!.isNotEmpty)
-                    ? null
-                    : Text(
-                        initial,
-                        style: TextStyle(
-                          color: widget.isDark ? Colors.white70 : Colors.black87,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+              child: UserAvatar.fromUsername(
+                username: widget.comment.userUsername,
+                avatarUrl: widget.comment.userAvatarUrl,
+                size: 32,
               ),
             ),
           ],

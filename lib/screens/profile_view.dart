@@ -6,17 +6,20 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 import '../models/post_model.dart';
-import '../models/job_model.dart';
 import '../services/auth_service.dart';
 import '../services/social_service.dart';
 import '../services/job_service.dart';
 import '../services/image_upload_service.dart';
+import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
-import '../widgets/post_card.dart';
 import '../widgets/interests_selector.dart';
 import '../widgets/top_notification.dart';
+import '../widgets/user_avatar.dart';
 import 'crop_editor_screen.dart';
-import 'job_detail_screen.dart';
+import 'profile/profile_completion_card.dart';
+import 'profile/profile_posts_tab.dart';
+import 'profile/profile_jobs_tab.dart';
+import 'profile/profile_info_tab.dart';
 
 class ProfileView extends StatefulWidget {
   const ProfileView({super.key});
@@ -34,7 +37,7 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
   List<PostModel> _userPosts = [];
   bool _isLoadingPosts = true;
   bool _isCompletionCardDismissed = false;
-  List<JobModel> _myJobs = [];
+  List<dynamic> _myJobs = []; // Using dynamic to avoid circular model issues if any
   bool _isLoadingMyJobs = true;
 
   @override
@@ -69,6 +72,25 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
       setState(() {
         _isCompletionCardDismissed = true;
       });
+      if (mounted) {
+        TopNotification.show(
+          context,
+          message: 'Карточка прогресса скрыта',
+          icon: Icons.visibility_off_rounded,
+          actionLabel: 'Отменить',
+          onActionPressed: () async {
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('dismissed_profile_completion_card', false);
+              if (mounted) {
+                setState(() {
+                  _isCompletionCardDismissed = false;
+                });
+              }
+            } catch (_) {}
+          },
+        );
+      }
     } catch (_) {}
   }
 
@@ -330,74 +352,6 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
     }
   }
 
-  Widget _buildPostsList(bool isDark, List<PostModel> posts) {
-    if (_isLoadingPosts) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(40.0),
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppTheme.primary,
-          ),
-        ),
-      );
-    }
-
-    if (posts.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(40),
-          child: Column(
-            children: [
-              Icon(
-                Icons.article_outlined,
-                size: 40,
-                color: isDark ? Colors.white12 : Colors.black12,
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Нет публикаций',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: isDark
-                      ? AppTheme.textSecondaryDark
-                      : AppTheme.textSecondaryLight,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Column(
-      children: posts.map((post) {
-        return PostCard(
-          post: post,
-          useHero: false,
-          onDelete: () {
-            setState(() {
-              _userPosts.removeWhere((p) => p.id == post.id);
-            });
-          },
-          onLikeToggle: () {
-            setState(() {
-              final idx = _userPosts.indexWhere((p) => p.id == post.id);
-              if (idx != -1) {
-                final p = _userPosts[idx];
-                final wasLiked = p.isLikedByMe;
-                _userPosts[idx] = p.copyWith(
-                  isLikedByMe: !wasLiked,
-                  likesCount: wasLiked ? p.likesCount - 1 : p.likesCount + 1,
-                );
-              }
-            });
-          },
-        );
-      }).toList(),
-    );
-  }
-
   void _bioListener() {
     if (_isEditing) {
       setState(() {});
@@ -441,49 +395,51 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
       }
     }
 
+    // Reactively map posts from the central social service
+    final socialService = Provider.of<SocialService>(context);
+    final displayPosts = _userPosts.map((localPost) {
+      return socialService.posts.firstWhere(
+        (p) => p.id == localPost.id,
+        orElse: () => localPost,
+      );
+    }).toList();
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) {
           return [
             SliverAppBar(
-              expandedHeight: 100,
               floating: false,
               pinned: true,
-              backgroundColor: Colors.transparent,
+              backgroundColor: isDark ? AppTheme.darkBg : AppTheme.lightBg,
               elevation: 0,
               surfaceTintColor: Colors.transparent,
-              flexibleSpace: FlexibleSpaceBar(
-                titlePadding: const EdgeInsets.only(left: 16, bottom: 10),
-                title: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 5,
+              title: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.xs + 2,
+                ),
+                decoration: BoxDecoration(
+                  color: isDark ? AppTheme.darkSurface : Colors.white,
+                  borderRadius: AppRadius.controlR,
+                  border: Border.all(
+                    color: context.appCardBorder,
+                    width: 0.5,
                   ),
-                  decoration: BoxDecoration(
-                    color: isDark ? AppTheme.darkSurface : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: isDark ? 0.25 : 0.04,
-                        ),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Text(
-                    'Профиль',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: isDark ? Colors.white : Colors.black,
-                      letterSpacing: -0.5,
-                    ),
+                  boxShadow: AppShadows.soft(isDark),
+                ),
+                child: Text(
+                  'Профиль',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: context.appTextPrimary,
+                    letterSpacing: -0.3,
                   ),
                 ),
               ),
+              centerTitle: true,
             ),
             SliverToBoxAdapter(
               child: Padding(
@@ -494,7 +450,12 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
                     _buildHeaderSection(user, theme, isDark, authService),
                     if (!_isCompletionCardDismissed) ...[
                       const SizedBox(height: 12),
-                      _buildProfileCompletionCard(user, theme, isDark),
+                      ProfileCompletionCard(
+                        user: user,
+                        isEditing: _isEditing,
+                        onStartEditing: () => setState(() => _isEditing = true),
+                        onDismissed: _dismissCompletionCard,
+                      ),
                     ],
                     const SizedBox(height: 12),
                   ],
@@ -532,9 +493,36 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
             : TabBarView(
                 controller: _tabController,
                 children: [
-                  _buildPostsTab(isDark),
-                  _buildMyJobsTab(isDark),
-                  _buildInfoTab(user, theme, isDark),
+                  ProfilePostsTab(
+                    posts: displayPosts,
+                    isLoading: _isLoadingPosts,
+                    onRefresh: _loadUserPosts,
+                    onDeletePost: (post) {
+                      setState(() {
+                        _userPosts.removeWhere((p) => p.id == post.id);
+                      });
+                    },
+                    onLikeTogglePost: (post) {
+                      setState(() {
+                        final idx = _userPosts.indexWhere((p) => p.id == post.id);
+                        if (idx != -1) {
+                          final p = _userPosts[idx];
+                          final wasLiked = p.isLikedByMe;
+                          _userPosts[idx] = p.copyWith(
+                            isLikedByMe: !wasLiked,
+                            likesCount: wasLiked ? p.likesCount - 1 : p.likesCount + 1,
+                          );
+                        }
+                      });
+                    },
+                  ),
+                  ProfileJobsTab(
+                    jobs: _myJobs.cast(), // Safety cast to JobModel
+                    isLoading: _isLoadingMyJobs,
+                    onRefresh: _loadMyJobs,
+                    onJobDetailsReturned: _loadMyJobs,
+                  ),
+                  ProfileInfoTab(user: user),
                 ],
               ),
       ),
@@ -555,61 +543,14 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
           children: [
             Stack(
               children: [
-                GestureDetector(
+                UserAvatar.fromName(
+                  firstName: user.firstName,
+                  lastName: user.lastName,
+                  avatarUrl: user.avatarUrl,
+                  size: 92,
+                  showBorder: true,
+                  borderWidth: 1.5,
                   onTap: _isEditing ? () => _showAvatarOptions(context, authService) : null,
-                  child: Container(
-                    width: 92,
-                    height: 92,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isDark ? AppTheme.darkBg : Colors.white,
-                      border: Border.all(
-                        color: isDark ? Colors.white24 : Colors.black12,
-                        width: 1.5,
-                      ),
-                    ),
-                    padding: const EdgeInsets.all(4),
-                    child: (user.avatarUrl != null && user.avatarUrl!.isNotEmpty)
-                        ? ClipOval(
-                            child: Image.network(
-                              user.avatarUrl!,
-                              width: 84,
-                              height: 84,
-                              fit: BoxFit.cover,
-                              loadingBuilder: (context, child, loadingProgress) {
-                                if (loadingProgress == null) return child;
-                                return const Center(
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 1.5,
-                                    color: AppTheme.primary,
-                                  ),
-                                );
-                              },
-                              errorBuilder: (context, error, stackTrace) {
-                                return Center(
-                                  child: Text(
-                                    '${user.firstName.isNotEmpty ? user.firstName[0].toUpperCase() : ''}${user.lastName.isNotEmpty ? user.lastName[0].toUpperCase() : ''}',
-                                    style: const TextStyle(
-                                      fontSize: 26,
-                                      fontWeight: FontWeight.w700,
-                                      color: AppTheme.primary,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          )
-                        : Center(
-                            child: Text(
-                              '${user.firstName.isNotEmpty ? user.firstName[0].toUpperCase() : ''}${user.lastName.isNotEmpty ? user.lastName[0].toUpperCase() : ''}',
-                              style: const TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.primary,
-                              ),
-                            ),
-                          ),
-                  ),
                 ),
                 if (_isEditing)
                   Positioned(
@@ -836,437 +777,6 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildProfileCompletionCard(UserModel user, ThemeData theme, bool isDark) {
-    return Dismissible(
-      key: const Key('profile_completion_card'),
-      direction: DismissDirection.horizontal,
-      onDismissed: (direction) {
-        _dismissCompletionCard();
-        TopNotification.show(
-          context,
-          message: 'Карточка прогресса скрыта',
-          icon: Icons.visibility_off_rounded,
-          actionLabel: 'Отменить',
-          onActionPressed: () async {
-            try {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('dismissed_profile_completion_card', false);
-              setState(() {
-                _isCompletionCardDismissed = false;
-              });
-            } catch (_) {}
-          },
-        );
-      },
-      background: Container(
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        decoration: BoxDecoration(
-          color: AppTheme.primary.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Icon(Icons.visibility_off_rounded, color: AppTheme.primary, size: 24),
-      ),
-      secondaryBackground: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        decoration: BoxDecoration(
-          color: AppTheme.primary.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Icon(Icons.visibility_off_rounded, color: AppTheme.primary, size: 24),
-      ),
-      child: Card(
-        color: isDark ? AppTheme.darkSurface : Colors.white,
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    user.isProfileComplete ? 'Профиль заполнен 🎉' : 'Заполните профиль',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                  Text(
-                    '${(user.completionProgress * 100).toInt()}%',
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primary),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: user.completionProgress,
-                  color: AppTheme.primary,
-                  backgroundColor: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
-                  minHeight: 6,
-                ),
-              ),
-              if (!user.isProfileComplete && !_isEditing) ...[
-                const SizedBox(height: 12),
-                Text(
-                  'Пожалуйста, расскажите о себе и выберите ваши интересы, чтобы завершить настройку профиля.',
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 8),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primary.withValues(alpha: 0.1),
-                    foregroundColor: AppTheme.primary,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  icon: const Icon(Icons.edit_note_rounded),
-                  label: const Text('Заполнить сейчас'),
-                  onPressed: () {
-                    setState(() {
-                      _isEditing = true;
-                    });
-                  },
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPostsTab(bool isDark) {
-    final socialService = Provider.of<SocialService>(context);
-    final displayPosts = _userPosts.map((localPost) {
-      return socialService.posts.firstWhere(
-        (p) => p.id == localPost.id,
-        orElse: () => localPost,
-      );
-    }).toList();
-
-    return RefreshIndicator(
-      onRefresh: _loadUserPosts,
-      color: AppTheme.primary,
-      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-        padding: const EdgeInsets.fromLTRB(0, 12, 0, 100),
-        children: [
-          _buildPostsList(isDark, displayPosts),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoTab(UserModel user, ThemeData theme, bool isDark) {
-    return ListView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-      children: [
-        _buildProfileViewMode(user, theme, isDark),
-      ],
-    );
-  }
-
-  Widget _buildMyJobsTab(bool isDark) {
-    if (_isLoadingMyJobs) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(40.0),
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppTheme.primary,
-          ),
-        ),
-      );
-    }
-
-    if (_myJobs.isEmpty) {
-      return RefreshIndicator(
-        onRefresh: _loadMyJobs,
-        color: AppTheme.primary,
-        backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-          children: [
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 80.0, left: 32, right: 32),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.work_outline_rounded,
-                      size: 40,
-                      color: isDark ? Colors.white12 : Colors.black12,
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Нет заказов',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: isDark
-                            ? AppTheme.textSecondaryDark
-                            : AppTheme.textSecondaryLight,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadMyJobs,
-      color: AppTheme.primary,
-      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
-      child: ListView.builder(
-        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-        itemCount: _myJobs.length,
-        itemBuilder: (context, index) {
-          final job = _myJobs[index];
-          Color statusColor = AppTheme.success;
-          String statusText = 'Активен';
-          if (job.status == 'closed') {
-            statusColor = Colors.grey;
-            statusText = 'Закрыт';
-          } else if (job.status == 'pending') {
-            statusColor = Colors.orange;
-            statusText = 'На проверке';
-          } else if (job.status == 'rejected') {
-            statusColor = AppTheme.error;
-            statusText = 'Отклонен';
-          }
-
-          return Card(
-            color: isDark ? AppTheme.darkSurface : Colors.white,
-            margin: const EdgeInsets.only(bottom: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(
-                color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
-                width: 0.5,
-              ),
-            ),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => JobDetailScreen(job: job),
-                  ),
-                );
-                _loadMyJobs();
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primary.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            '${job.categoryEmoji} ${job.categoryName}',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.primary,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: statusColor.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            statusText,
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: statusColor,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      job.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      job.description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          job.formattedBudget,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: (job.status == 'closed' || job.status == 'rejected') ? Colors.grey : AppTheme.success,
-                          ),
-                        ),
-                        Text(
-                          '${job.createdAt.day}.${job.createdAt.month}.${job.createdAt.year}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildProfileViewMode(UserModel user, ThemeData theme, bool isDark) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Учетная информация',
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 10),
-        _buildInfoTile(Icons.mail_outline_rounded, 'Эл. почта', user.email),
-        const SizedBox(height: 12),
-        _buildInfoTile(
-          Icons.phone_android_rounded,
-          'Номер телефона',
-          user.phoneNumber,
-        ),
-        const SizedBox(height: 20),
-        Text(
-          'О себе (Биография)',
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Card(
-          color: isDark ? AppTheme.darkSurface : Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(
-              color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
-              width: 0.5,
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(
-              (user.biography != null && user.biography!.trim().isNotEmpty)
-                  ? user.biography!
-                  : 'Биография пока не заполнена. Нажмите редактировать, чтобы добавить информацию.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontStyle:
-                    (user.biography == null || user.biography!.trim().isEmpty)
-                    ? FontStyle.italic
-                    : FontStyle.normal,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 20),
-        Text(
-          'Интересы',
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 10),
-        if (user.interests.isEmpty)
-          Card(
-            color: isDark ? AppTheme.darkSurface : Colors.white,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(
-                color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
-                width: 0.5,
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Text(
-                'Интересы пока не добавлены.',
-                style: TextStyle(
-                  fontStyle: FontStyle.italic,
-                  color: isDark
-                      ? AppTheme.textSecondaryDark
-                      : AppTheme.textSecondaryLight,
-                ),
-              ),
-            ),
-          )
-        else
-          Wrap(
-            spacing: 8.0,
-            runSpacing: 8.0,
-            children: user.interests.map((interest) {
-              return Chip(
-                label: Text(
-                  interest,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-                backgroundColor: AppTheme.primary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: BorderSide.none,
-                ),
-              );
-            }).toList(),
-          ),
-      ],
-    );
-  }
-
   Widget _buildProfileEditMode(ThemeData theme, bool isDark, bool isLoading) {
     final authService = Provider.of<AuthService>(context);
     final user = authService.currentUser;
@@ -1343,66 +853,6 @@ class _ProfileViewState extends State<ProfileView> with SingleTickerProviderStat
           },
         ),
       ],
-    );
-  }
-
-  Widget _buildInfoTile(IconData icon, String title, String value) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Card(
-      color: isDark ? AppTheme.darkSurface : Colors.white,
-      elevation: 0,
-      margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: isDark ? AppTheme.borderDark : AppTheme.borderLight,
-          width: 0.5,
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppTheme.primary.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: AppTheme.primary, size: 20),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: isDark
-                          ? AppTheme.textSecondaryDark
-                          : AppTheme.textSecondaryLight,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    value.isNotEmpty ? value : '—',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

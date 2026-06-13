@@ -15,6 +15,7 @@ class AppTheme {
   static const Color textPrimaryDark = Color(0xFFFFFFFF);
   static const Color textSecondaryDark = Color(0xFF8E8E93); // System Gray
   static const Color borderDark = Color(0xFF38383A); // System Gray 4
+  static const Color cardBorderDark = Color(0xFF2C2C2E); // hairline на карточках
 
   // Light Theme Palette
   static const Color lightBg = Color(0xFFFFFFFF); // Stark White
@@ -24,11 +25,20 @@ class AppTheme {
   static const Color textPrimaryLight = Color(0xFF000000);
   static const Color textSecondaryLight = Color(0xFF8E8E93); // System Gray
   static const Color borderLight = Color(0xFFD1D1D6); // System Gray 4 (light)
+  static const Color cardBorderLight = Color(0xFFE5E5EA); // hairline на карточках
 
   // Status Colors (Apple HIG)
   static const Color success = Color(0xFF34C759); // System Green
   static const Color warning = Color(0xFFFF9500); // System Orange
   static const Color error = Color(0xFFFF3B30); // System Red
+
+  // Мягкие фоны статусов (для плашек/баннеров: тёмная / светлая тема)
+  static const Color successBgDark = Color(0xFF192A20);
+  static const Color successBgLight = Color(0xFFEAF9EE);
+  static const Color warningBgDark = Color(0xFF2A2113);
+  static const Color warningBgLight = Color(0xFFFFF4E5);
+  static const Color errorBgDark = Color(0xFF2A1618);
+  static const Color errorBgLight = Color(0xFFFDECEC);
 
   // ─── Dark Theme ────────────────────────────────────────────────────
   static ThemeData get darkTheme {
@@ -94,8 +104,8 @@ class AppTheme {
         color: darkCard,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Color(0xFF2C2C2E), width: 0.5),
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: cardBorderDark, width: 0.5),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -231,8 +241,8 @@ class AppTheme {
         color: lightSurface,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Color(0xFFE5E5EA), width: 0.5),
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: cardBorderLight, width: 0.5),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(

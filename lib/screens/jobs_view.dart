@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/job_service.dart';
+import '../theme/app_dimens.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_empty_state.dart';
+import '../widgets/app_header.dart';
 import '../widgets/job_card.dart';
 import '../widgets/skeleton_item.dart';
 import '../models/job_model.dart';
@@ -20,12 +23,40 @@ class _JobsViewState extends State<JobsView> {
   final ScrollController _scrollController = ScrollController();
   double _appBarOpacity = 0.0;
 
+  // Сортировка: false = новые сначала (как с сервера), true = с оплатой выше.
+  bool _budgetFirst = false;
+
+  List<JobModel> _sortedJobs(List<JobModel> jobs) {
+    if (!_budgetFirst) return jobs;
+    final sorted = List<JobModel>.from(jobs);
+    sorted.sort((a, b) {
+      final aHas = a.budget != null && a.budget!.trim().isNotEmpty;
+      final bHas = b.budget != null && b.budget!.trim().isNotEmpty;
+      if (aHas == bHas) return b.createdAt.compareTo(a.createdAt);
+      return aHas ? -1 : 1;
+    });
+    return sorted;
+  }
+
+  // Filter state fields
+  String? _locationType;
+  String? _city;
+  String? _district;
+  String? _workType;
+
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<JobService>(context, listen: false).fetchJobs(category: _selectedCategory);
+      Provider.of<JobService>(context, listen: false).fetchJobs(
+        category: _selectedCategory,
+        isRefresh: true,
+        locationType: _locationType,
+        city: _city,
+        district: _district,
+        workType: _workType,
+      );
     });
   }
 
@@ -38,6 +69,24 @@ class _JobsViewState extends State<JobsView> {
         _appBarOpacity = newOpacity;
       });
     }
+
+    // Trigger pagination when reaching within 200 pixels of the bottom
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      final jobService = Provider.of<JobService>(context, listen: false);
+      if (!jobService.isLoading &&
+          !jobService.isLoadingMore &&
+          jobService.hasMore) {
+        jobService.fetchJobs(
+          category: _selectedCategory,
+          isRefresh: false,
+          locationType: _locationType,
+          city: _city,
+          district: _district,
+          workType: _workType,
+        );
+      }
+    }
   }
 
   @override
@@ -47,7 +96,14 @@ class _JobsViewState extends State<JobsView> {
   }
 
   Future<void> _refresh() async {
-    await Provider.of<JobService>(context, listen: false).fetchJobs(category: _selectedCategory);
+    await Provider.of<JobService>(context, listen: false).fetchJobs(
+      category: _selectedCategory,
+      isRefresh: true,
+      locationType: _locationType,
+      city: _city,
+      district: _district,
+      workType: _workType,
+    );
   }
 
   void _onCategorySelected(String categoryKey) {
@@ -55,7 +111,207 @@ class _JobsViewState extends State<JobsView> {
     setState(() {
       _selectedCategory = categoryKey;
     });
-    Provider.of<JobService>(context, listen: false).fetchJobs(category: categoryKey);
+    Provider.of<JobService>(context, listen: false).fetchJobs(
+      category: categoryKey,
+      isRefresh: true,
+      locationType: _locationType,
+      city: _city,
+      district: _district,
+      workType: _workType,
+    );
+  }
+
+  void _showFilterSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            return Container(
+              decoration: BoxDecoration(
+                color: isDark ? AppTheme.darkSurface : Colors.white,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, MediaQuery.of(context).viewInsets.bottom + 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.white24 : Colors.black12,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Фильтры вакансий',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      if (_locationType != null || _workType != null)
+                        TextButton(
+                          onPressed: () {
+                            setSheetState(() {
+                              _locationType = null;
+                              _city = null;
+                              _district = null;
+                              _workType = null;
+                            });
+                          },
+                          child: const Text('Сбросить', style: TextStyle(color: AppTheme.error)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Location Type Selector
+                  const Text('Тип локации', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text('Все'),
+                          selected: _locationType == null,
+                          onSelected: (val) {
+                            if (val) {
+                              setSheetState(() {
+                                _locationType = null;
+                                _city = null;
+                                _district = null;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text('Город'),
+                          selected: _locationType == 'city',
+                          onSelected: (val) {
+                            if (val) {
+                              setSheetState(() {
+                                _locationType = 'city';
+                                _district = null;
+                                _city = 'Махачкала';
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text('Район'),
+                          selected: _locationType == 'district',
+                          onSelected: (val) {
+                            if (val) {
+                              setSheetState(() {
+                                _locationType = 'district';
+                                _city = null;
+                                _district = 'Гунибский район';
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Contextual dropdown based on location type
+                  if (_locationType == 'city') ...[
+                    const Text('Выберите город', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: _city,
+                      items: ['Махачкала', 'Каспийск', 'Дербент', 'Хасавюрт', 'Буйнакск', 'Кизляр', 'Избербаш']
+                          .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                          .toList(),
+                      onChanged: (val) {
+                        setSheetState(() {
+                          _city = val;
+                        });
+                      },
+                      decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 12)),
+                    ),
+                    const SizedBox(height: 16),
+                  ] else if (_locationType == 'district') ...[
+                    const Text('Выберите район', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: _district,
+                      items: JobModel.locationsOfDagestan
+                          .where((loc) => loc.contains('район'))
+                          .map((d) => DropdownMenuItem(value: d, child: Text(d)))
+                          .toList(),
+                      onChanged: (val) {
+                        setSheetState(() {
+                          _district = val;
+                        });
+                      },
+                      decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 12)),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Work Type Selector
+                  const Text('Занятость', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String?>(
+                    initialValue: _workType,
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('Все типы занятости')),
+                      ...WorkType.values.map((wt) => DropdownMenuItem(value: wt.toDbString(), child: Text(wt.displayName))),
+                    ],
+                    onChanged: (val) {
+                      setSheetState(() {
+                        _workType = val;
+                      });
+                    },
+                    decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 12)),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Apply button
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      Provider.of<JobService>(context, listen: false).fetchJobs(
+                        category: _selectedCategory,
+                        isRefresh: true,
+                        locationType: _locationType,
+                        city: _city,
+                        district: _district,
+                        workType: _workType,
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Применить фильтры', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showCreateJobSheet() {
@@ -80,11 +336,11 @@ class _JobsViewState extends State<JobsView> {
                 color: cardColor,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
+                  color: isDark ? AppTheme.cardBorderDark : AppTheme.cardBorderLight,
                   width: 0.5,
                 ),
               ),
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(AppSpacing.md),
               child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -124,62 +380,14 @@ class _JobsViewState extends State<JobsView> {
   Widget _buildEmptyState(bool isDark) {
     return SliverFillRemaining(
       hasScrollBody: false,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 48.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.work_outline_rounded,
-                  size: 36,
-                  color: AppTheme.primary,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Нет активных заказов',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: isDark ? Colors.white : Colors.black,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _selectedCategory == 'all'
-                    ? 'Будьте первым, кто создаст заказ на фриланс-витрине!'
-                    : 'В этой категории пока нет заказов. Попробуйте выбрать другую или создайте свой!',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight,
-                ),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
-                onPressed: _showCreateJobSheet,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('Разместить заказ'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+      child: AppEmptyState(
+        icon: Icons.work_outline_rounded,
+        title: 'Нет активных заказов',
+        subtitle: _selectedCategory == 'all'
+            ? 'Будьте первым, кто создаст заказ на фриланс-витрине!'
+            : 'В этой категории пока нет заказов. Попробуйте выбрать другую или создайте свой!',
+        actionLabel: 'Разместить заказ',
+        onAction: _showCreateJobSheet,
       ),
     );
   }
@@ -189,6 +397,7 @@ class _JobsViewState extends State<JobsView> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final jobService = Provider.of<JobService>(context);
+    final displayedJobs = _sortedJobs(jobService.jobs);
 
     // List of categories for chips
     final filterCategories = [
@@ -221,61 +430,51 @@ class _JobsViewState extends State<JobsView> {
               elevation: 0,
               surfaceTintColor: Colors.transparent,
               flexibleSpace: FlexibleSpaceBar(
-                titlePadding: const EdgeInsets.only(left: 16, bottom: 10),
+                titlePadding: const EdgeInsets.only(
+                  left: AppSpacing.lg,
+                  bottom: AppSpacing.md,
+                ),
                 title: Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 5,
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.xs + 2,
                   ),
                   decoration: BoxDecoration(
                     color: isDark ? AppTheme.darkSurface : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: isDark ? 0.25 : 0.04,
-                        ),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
+                    borderRadius: AppRadius.controlR,
+                    boxShadow: AppShadows.soft(isDark),
                   ),
                   child: Text(
                     'Работа',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w800,
-                      color: isDark ? Colors.white : Colors.black,
+                      color: context.appTextPrimary,
                       letterSpacing: -0.5,
                     ),
                   ),
                 ),
               ),
               actions: [
-                GestureDetector(
-                  onTap: _showCreateJobSheet,
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    margin: const EdgeInsets.only(right: 16),
-                    decoration: BoxDecoration(
-                      color: isDark ? AppTheme.darkSurface : Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(
-                            alpha: isDark ? 0.25 : 0.04,
-                          ),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.add_rounded,
-                      color: AppTheme.primary,
-                      size: 22,
-                    ),
+                AppHeaderAction(
+                  icon: Icons.sort_rounded,
+                  onTap: () => setState(() => _budgetFirst = !_budgetFirst),
+                  iconColor: _budgetFirst
+                      ? AppTheme.primary
+                      : context.appTextSecondary,
+                ),
+                AppHeaderAction(
+                  icon: Icons.filter_list_rounded,
+                  onTap: _showFilterSheet,
+                  iconColor: (_locationType != null || _workType != null)
+                      ? AppTheme.primary
+                      : context.appTextSecondary,
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: AppSpacing.lg),
+                  child: AppHeaderAction(
+                    icon: Icons.add_rounded,
+                    onTap: _showCreateJobSheet,
                   ),
                 ),
               ],
@@ -299,15 +498,18 @@ class _JobsViewState extends State<JobsView> {
                         onTap: () => _onCategorySelected(item['key']!),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                            vertical: AppSpacing.xs + 2,
+                          ),
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? AppTheme.primary.withValues(alpha: 0.12)
-                                : (isDark ? AppTheme.darkSurface : const Color(0xFFF2F2F7)),
-                            borderRadius: BorderRadius.circular(10),
+                                ? AppTheme.primary.withValues(alpha: AppAlpha.fillMuted)
+                                : (isDark ? AppTheme.darkSurface : AppTheme.lightSurface),
+                            borderRadius: AppRadius.chipR,
                             border: Border.all(
                               color: isSelected
-                                  ? AppTheme.primary.withValues(alpha: 0.4)
+                                  ? AppTheme.primary.withValues(alpha: AppAlpha.fillStrong)
                                   : Colors.transparent,
                               width: 1,
                             ),
@@ -316,7 +518,7 @@ class _JobsViewState extends State<JobsView> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(item['emoji']!, style: const TextStyle(fontSize: 14)),
-                              const SizedBox(width: 4),
+                              const SizedBox(width: AppSpacing.xs),
                               Text(
                                 item['name']!,
                                 style: TextStyle(
@@ -324,7 +526,7 @@ class _JobsViewState extends State<JobsView> {
                                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                                   color: isSelected
                                       ? AppTheme.primary
-                                      : (isDark ? Colors.white : Colors.black),
+                                      : context.appTextPrimary,
                                 ),
                               ),
                             ],
@@ -348,7 +550,7 @@ class _JobsViewState extends State<JobsView> {
                 sliver: SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
-                      final job = jobService.jobs[index];
+                      final job = displayedJobs[index];
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12.0),
                         child: JobCard(
@@ -364,10 +566,32 @@ class _JobsViewState extends State<JobsView> {
                         ),
                       );
                     },
-                    childCount: jobService.jobs.length,
+                    childCount: displayedJobs.length,
                   ),
                 ),
               ),
+
+            // Bottom loading spinner or spacing for pagination to clear floating nav bar
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  top: jobService.isLoadingMore ? AppSpacing.sm : 0.0,
+                  bottom: AppSpacing.bottomNavClearance,
+                ),
+                child: jobService.isLoadingMore
+                    ? const Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
           ],
         ),
       ),

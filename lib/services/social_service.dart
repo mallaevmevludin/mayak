@@ -1,161 +1,106 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/post_model.dart';
 import '../models/comment_model.dart';
 import '../models/user_model.dart';
+import '../models/notification_model.dart';
+import 'jobs/mock_job_repository.dart';
 import 'auth_service.dart';
 import 'image_upload_service.dart';
 import 'supabase_config.dart';
+import 'social/social_repository.dart';
+import 'social/mock_social_repository.dart';
+import 'social/supabase_social_repository.dart';
+import 'realtime_service.dart';
+import '../utils/app_error.dart';
 
 class SocialService extends ChangeNotifier {
   final AuthService _authService;
+  late final SocialRepository _repository;
+  RealtimeService? _realtime;
+
+  int _unreadNotifications = 0;
+  int get unreadNotifications => _unreadNotifications;
 
   List<PostModel> _posts = [];
   bool _isLoading = false;
   String? _errorMessage;
+  String? _selectedTag;
 
   List<PostModel> get posts => _posts;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  String? get selectedTag => _selectedTag;
+
+  bool _hasMore = true;
+  bool _isLoadingMore = false;
+
+  bool get hasMore => _hasMore;
+  bool get isLoadingMore => _isLoadingMore;
+
+  void setSelectedTag(String? tag) {
+    _selectedTag = tag;
+    fetchPosts(isRefresh: true);
+  }
 
   bool get _isMockMode => !SupabaseConfig.isConfigured;
 
-  // Local mock databases
-  static final List<PostModel> _mockPostsDb = [
-    PostModel(
-      id: 1,
-      userId: 'mock-user-2',
-      userFirstName: 'Александр',
-      userLastName: 'Петров',
-      userUsername: 'sasha_fit',
-      userEmojiAvatar: '💪',
-      userIsVerified: true,
-      content:
-          'Ребята, закрыл неделю ежедневных тренировок! Стрик 7 дней 🔥 Чувствую себя супер.',
-      createdAt: DateTime.now().subtract(const Duration(hours: 3)),
-      likesCount: 5,
-      commentsCount: 2,
-      isLikedByMe: false,
-    ),
-    PostModel(
-      id: 2,
-      userId: 'mock-user-3',
-      userFirstName: 'Мария',
-      userLastName: 'Смирнова',
-      userUsername: 'maria_zen',
-      userEmojiAvatar: '🧘',
-      userIsVerified: true,
-      content:
-          'Сегодняшняя утренняя медитация была невероятно глубокой. Всем хорошего и осознанного дня! ✨',
-      createdAt: DateTime.now().subtract(const Duration(hours: 6)),
-      likesCount: 12,
-      commentsCount: 1,
-      isLikedByMe: true,
-    ),
-  ];
-
-  static final Map<int, List<CommentModel>> _mockCommentsDb = {
-    1: [
-      CommentModel(
-        id: 1,
-        postId: 1,
-        userId: 'mock-user-3',
-        userFirstName: 'Мария',
-        userLastName: 'Смирнова',
-        userUsername: 'maria_zen',
-        userEmojiAvatar: '🧘',
-        userIsVerified: true,
-        content: 'Поздравляю! Отличный результат 💪 Какой следующий рубеж?',
-        createdAt: DateTime.now().subtract(const Duration(hours: 2)),
-      ),
-      CommentModel(
-        id: 2,
-        postId: 1,
-        userId: 'mock-user-1',
-        userFirstName: 'Иван',
-        userLastName: 'Иванов',
-        userUsername: 'ivanov',
-        userEmojiAvatar: '🏃',
-        userIsVerified: false,
-        content: 'Мощно! Тоже хочу такую серию собрать.',
-        createdAt: DateTime.now().subtract(const Duration(hours: 1)),
-      ),
-    ],
-    2: [
-      CommentModel(
-        id: 3,
-        postId: 2,
-        userId: 'mock-user-2',
-        userFirstName: 'Александр',
-        userLastName: 'Петров',
-        userUsername: 'sasha_fit',
-        userEmojiAvatar: '💪',
-        userIsVerified: true,
-        content: 'Маша, подскажи, под какую музыку медитируешь? Или в тишине?',
-        createdAt: DateTime.now().subtract(const Duration(hours: 5)),
-      ),
-    ],
-  };
-
-  static final List<UserModel> _mockProfiles = [
-    UserModel(
-      id: 'mock-user-1',
-      firstName: 'Иван',
-      lastName: 'Иванов',
-      username: 'ivanov',
-      email: 'ivan@example.com',
-      phoneNumber: '+7 (999) 123-45-67',
-      biography: 'Разработчик на Flutter, люблю спорт и чтение.',
-      interests: ['Flutter', 'Спорт', 'Чтение'],
-      emojiAvatar: '🏃',
-      isVerified: false,
-    ),
-    UserModel(
-      id: 'mock-user-2',
-      firstName: 'Александр',
-      lastName: 'Петров',
-      username: 'sasha_fit',
-      email: 'sasha@example.com',
-      phoneNumber: '+7 (999) 765-43-21',
-      biography: 'Фитнес-тренер, бегаю марафоны, пропагандирую ЗОЖ 💪',
-      interests: ['Фитнес', 'Бег', 'ЗОЖ', 'Питание'],
-      emojiAvatar: '💪',
-      isVerified: true,
-    ),
-    UserModel(
-      id: 'mock-user-3',
-      firstName: 'Мария',
-      lastName: 'Смирнова',
-      username: 'maria_zen',
-      email: 'maria@example.com',
-      phoneNumber: '+7 (999) 111-22-33',
-      biography: 'Инструктор по йоге и медитации. Учу находить дзен в хаосе 🧘',
-      interests: ['Йога', 'Медитация', 'Дзен', 'Психология'],
-      emojiAvatar: '🧘',
-      isVerified: true,
-    ),
-  ];
-
   SocialService(this._authService) {
+    if (_isMockMode) {
+      _repository = MockSocialRepository();
+    } else {
+      _repository = SupabaseSocialRepository();
+      // Живое обновление ленты: при изменениях постов/лайков/комментариев
+      // подтягиваем свежие данные (с дебаунсом внутри RealtimeService).
+      _realtime = RealtimeService()
+        ..subscribeToFeed(onChange: _onRealtimeFeedChange);
+    }
+
     _authService.addListener(_onAuthStatusChanged);
     if (_authService.currentUser != null) {
-      fetchPosts();
+      fetchPosts(isRefresh: true);
+      _initNotifications();
     }
   }
 
   void _onAuthStatusChanged() {
     if (_authService.currentUser == null) {
       _posts = [];
+      _unreadNotifications = 0;
+      _realtime?.unsubscribeFromNotifications();
       _safeNotify();
     } else {
-      fetchPosts();
+      fetchPosts(isRefresh: true);
+      _initNotifications();
     }
+  }
+
+  /// Подгружает счётчик непрочитанных и подписывается на новые уведомления.
+  void _initNotifications() {
+    final me = _authService.currentUser;
+    if (me == null) return;
+    refreshUnreadCount();
+    _realtime?.subscribeToNotifications(
+      userId: me.id,
+      onInsert: (_) {
+        _unreadNotifications++;
+        _safeNotify();
+      },
+    );
+  }
+
+  /// Реакция на realtime-событие в ленте: мягко обновляем, если сейчас не
+  /// идёт загрузка (чтобы не конфликтовать с пагинацией/рефрешем).
+  void _onRealtimeFeedChange() {
+    if (_isLoading || _isLoadingMore) return;
+    if (_authService.currentUser == null) return;
+    fetchPosts(isRefresh: true);
   }
 
   @override
   void dispose() {
+    _realtime?.dispose();
     _authService.removeListener(_onAuthStatusChanged);
     super.dispose();
   }
@@ -206,43 +151,55 @@ class SocialService extends ChangeNotifier {
   }
 
   /// Fetch all social posts
-  Future<void> fetchPosts() async {
+  /// Fetch social posts with pagination
+  Future<void> fetchPosts({bool isRefresh = false}) async {
     final user = _authService.currentUser;
     if (user == null) return;
 
-    // Load from cache first for instant start
-    if (_posts.isEmpty) {
-      await _loadCachedPosts();
+    if (isRefresh) {
+      _posts = [];
+      _hasMore = true;
+      _isLoadingMore = false;
     }
 
-    _setLoading(true);
+    if (!_hasMore) return;
+
+    final bool isFirstLoad = _posts.isEmpty;
+    final int queryOffset = isFirstLoad ? 0 : _posts.length;
+
+    if (isFirstLoad && _selectedTag == null) {
+      await _loadCachedPosts();
+      _setLoading(true);
+    } else if (isFirstLoad) {
+      _setLoading(true);
+    } else {
+      _isLoadingMore = true;
+      _safeNotify();
+    }
+
     _clearError();
 
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        _posts = List<PostModel>.from(_mockPostsDb)
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final fetched = await _repository.fetchPosts(
+        user.id,
+        limit: 10,
+        offset: queryOffset,
+        tag: _selectedTag,
+      );
+
+      if (fetched.length < 10) {
+        _hasMore = false;
+      }
+
+      if (isRefresh || isFirstLoad) {
+        _posts = fetched;
       } else {
-        final response = await Supabase.instance.client
-            .from('posts')
-            .select('''
-              id, content, created_at, user_id,
-              link_url, link_title,
-              image_url, image_format, image_width, image_height, image_uploaded_at, image_urls,
-              profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
-              post_likes(user_id),
-              comments(id),
-              polls:polls(question, options),
-              poll_votes:poll_votes(user_id, option_index)
-            ''')
-            .order('created_at', ascending: false);
+        final existingIds = _posts.map((p) => p.id).toSet();
+        final newPosts = fetched.where((p) => !existingIds.contains(p.id)).toList();
+        _posts.addAll(newPosts);
+      }
 
-        final List<dynamic> data = response;
-        _posts = data
-            .map((json) => PostModel.fromJson(json, currentUserId: user.id))
-            .toList();
-
+      if (!_isMockMode && (isRefresh || isFirstLoad) && _selectedTag == null) {
         await _saveCachedPosts(_posts);
       }
       _safeNotify();
@@ -253,6 +210,8 @@ class SocialService extends ChangeNotifier {
       }
     } finally {
       _setLoading(false);
+      _isLoadingMore = false;
+      _safeNotify();
     }
   }
 
@@ -260,26 +219,7 @@ class SocialService extends ChangeNotifier {
   Future<PostModel?> fetchPost(int postId) async {
     final user = _authService.currentUser;
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        return _mockPostsDb.firstWhere((p) => p.id == postId);
-      } else {
-        final response = await Supabase.instance.client
-            .from('posts')
-            .select('''
-              id, content, created_at, user_id,
-              link_url, link_title,
-              image_url, image_format, image_width, image_height, image_uploaded_at, image_urls,
-              profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
-              post_likes(user_id),
-              comments(id),
-              polls:polls(question, options),
-              poll_votes:poll_votes(user_id, option_index)
-            ''')
-            .eq('id', postId)
-            .single();
-        return PostModel.fromJson(response, currentUserId: user?.id);
-      }
+      return await _repository.fetchPost(postId, user?.id);
     } catch (e) {
       debugPrint('Error fetching post $postId: $e');
       return null;
@@ -298,9 +238,10 @@ class SocialService extends ChangeNotifier {
     int? imageWidth,
     int? imageHeight,
     List<String>? imageUrls,
+    int? jobId,
   }) async {
     final user = _authService.currentUser;
-    if (user == null || (content.trim().isEmpty && imageUrl == null && (imageUrls == null || imageUrls.isEmpty) && pollQuestion == null)) return false;
+    if (user == null || (content.trim().isEmpty && imageUrl == null && (imageUrls == null || imageUrls.isEmpty) && pollQuestion == null && jobId == null)) return false;
 
     _setLoading(true);
     _clearError();
@@ -316,6 +257,8 @@ class SocialService extends ChangeNotifier {
             userVotedIndex: null,
           )
         : null;
+
+    final job = (jobId != null && _isMockMode) ? MockJobRepository.getJobById(jobId) : null;
 
     final optimisticPost = PostModel(
       id: DateTime.now().millisecondsSinceEpoch,
@@ -340,6 +283,8 @@ class SocialService extends ChangeNotifier {
       imageHeight: imageHeight,
       imageUploadedAt: (imageUrl != null || (imageUrls != null && imageUrls.isNotEmpty)) ? DateTime.now() : null,
       imageUrls: imageUrls ?? (imageUrl != null ? [imageUrl] : const []),
+      jobId: jobId,
+      job: job,
     );
 
     // Show post immediately
@@ -347,55 +292,35 @@ class SocialService extends ChangeNotifier {
     _safeNotify();
 
     try {
-      if (_isMockMode) {
-        debugPrint('SocialService.createPost: [Mock Mode] inserting post');
-        await Future.delayed(const Duration(milliseconds: 300));
-        _mockPostsDb.insert(0, optimisticPost);
-        return true;
+      final createdPost = await _repository.createPost(
+        userId: user.id,
+        content: content,
+        linkUrl: linkUrl,
+        linkTitle: linkTitle,
+        pollQuestion: pollQuestion,
+        pollOptions: pollOptions,
+        imageUrl: imageUrl,
+        imageFormat: imageFormat,
+        imageWidth: imageWidth,
+        imageHeight: imageHeight,
+        imageUrls: imageUrls,
+        jobId: jobId,
+      );
+
+      // Re-fetch posts in background to align exactly with database IDs/states
+      if (!_isMockMode) {
+        fetchPosts(isRefresh: true);
       } else {
-        final Map<String, dynamic> insertData = {
-          'user_id': user.id,
-          'content': content.trim(),
-          'link_url': linkUrl,
-          'link_title': linkTitle,
-          'image_url': imageUrl ?? (imageUrls != null && imageUrls.isNotEmpty ? imageUrls.first : null),
-          'image_format': imageFormat,
-          'image_width': imageWidth,
-          'image_height': imageHeight,
-          'image_uploaded_at': (imageUrl != null || (imageUrls != null && imageUrls.isNotEmpty)) ? DateTime.now().toUtc().toIso8601String() : null,
-          'image_urls': imageUrls ?? (imageUrl != null ? [imageUrl] : const []),
-        };
-
-        debugPrint('SocialService.createPost: Inserting post row to Supabase: $insertData');
-        final response = await Supabase.instance.client
-            .from('posts')
-            .insert(insertData)
-            .select('id')
-            .single();
-
-        final newPostId = response['id'] as int;
-        debugPrint('SocialService.createPost: Post created successfully with ID = $newPostId');
-
-        if (pollQuestion != null &&
-            pollOptions != null &&
-            pollOptions.isNotEmpty) {
-          debugPrint('SocialService.createPost: Inserting poll for post ID = $newPostId');
-          await Supabase.instance.client.from('polls').insert({
-            'post_id': newPostId,
-            'question': pollQuestion,
-            'options': pollOptions,
-          });
-          debugPrint('SocialService.createPost: Poll created successfully');
+        // In mock mode, replace the optimistic post with the returned post
+        final idx = _posts.indexWhere((p) => p.id == optimisticPost.id);
+        if (idx != -1) {
+          _posts[idx] = createdPost;
         }
-
-        // Refresh in background to get real server data (ID, timestamps)
-        // Don't set loading — optimistic post is already shown
-        fetchPosts();
-        return true;
+        _safeNotify();
       }
-    } catch (e, stackTrace) {
+      return true;
+    } catch (e) {
       debugPrint('SocialService.createPost ERROR: $e');
-      debugPrint('SocialService.createPost STACK TRACE:\n$stackTrace');
       // Revert optimistic post on error
       _posts.removeWhere((p) => p.id == optimisticPost.id);
       _safeNotify();
@@ -412,7 +337,7 @@ class SocialService extends ChangeNotifier {
     if (user == null) return false;
 
     final localIndex = _posts.indexWhere((p) => p.id == postId);
-    bool currentlyLiked = false;
+    bool currentlyLiked = currentlyLikedByMe ?? false;
     int likesCount = 0;
     PostModel? originalPost;
 
@@ -420,16 +345,6 @@ class SocialService extends ChangeNotifier {
       originalPost = _posts[localIndex];
       currentlyLiked = originalPost.isLikedByMe;
       likesCount = originalPost.likesCount;
-    } else {
-      if (_isMockMode) {
-        final dbIndex = _mockPostsDb.indexWhere((p) => p.id == postId);
-        if (dbIndex != -1) {
-          currentlyLiked = _mockPostsDb[dbIndex].isLikedByMe;
-          likesCount = _mockPostsDb[dbIndex].likesCount;
-        }
-      } else {
-        currentlyLiked = currentlyLikedByMe ?? false;
-      }
     }
 
     final int nextLikesCount = currentlyLiked ? likesCount - 1 : likesCount + 1;
@@ -445,34 +360,14 @@ class SocialService extends ChangeNotifier {
     }
 
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 100));
-
-        final dbIndex = _mockPostsDb.indexWhere((p) => p.id == postId);
-        if (dbIndex != -1) {
-          _mockPostsDb[dbIndex] = _mockPostsDb[dbIndex].copyWith(
-            isLikedByMe: nextLikedByMe,
-            likesCount: nextLikesCount,
-          );
-        }
-        _safeNotify();
-        return true;
-      } else {
-        if (currentlyLiked) {
-          await Supabase.instance.client
-              .from('post_likes')
-              .delete()
-              .eq('post_id', postId)
-              .eq('user_id', user.id);
-        } else {
-          await Supabase.instance.client.from('post_likes').insert({
-            'post_id': postId,
-            'user_id': user.id,
-          });
-        }
-        _safeNotify();
-        return true;
-      }
+      await _repository.likePost(
+        userId: user.id,
+        postId: postId,
+        currentlyLiked: currentlyLiked,
+      );
+      
+      // If we liked a post not currently in local state (uncommon), still report success
+      return true;
     } catch (e) {
       // Revert if error
       if (localIndex != -1 && originalPost != null) {
@@ -489,25 +384,7 @@ class SocialService extends ChangeNotifier {
     final user = _authService.currentUser;
     _clearError();
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        return _mockCommentsDb[postId] ?? [];
-      } else {
-        final response = await Supabase.instance.client
-            .from('comments')
-            .select('''
-              id, post_id, user_id, content, created_at,
-              profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
-              comment_likes(user_id)
-            ''')
-            .eq('post_id', postId)
-            .order('created_at', ascending: true);
-
-        final List<dynamic> data = response;
-        return data
-            .map((json) => CommentModel.fromJson(json, currentUserId: user?.id))
-            .toList();
-      }
+      return await _repository.fetchComments(postId, user?.id);
     } catch (e) {
       _setError(e.toString());
       return [];
@@ -521,74 +398,21 @@ class SocialService extends ChangeNotifier {
 
     _clearError();
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 200));
+      final newComment = await _repository.addComment(
+        postId: postId,
+        userId: user.id,
+        content: content,
+      );
 
-        final newComment = CommentModel(
-          id: DateTime.now().millisecondsSinceEpoch,
-          postId: postId,
-          userId: user.id,
-          userFirstName: user.firstName,
-          userLastName: user.lastName,
-          userUsername: user.username,
-          userEmojiAvatar: user.emojiAvatar,
-          userAvatarUrl: user.avatarUrl,
-          userIsVerified: user.isVerified,
-          content: content.trim(),
-          createdAt: DateTime.now(),
-        );
-
-        if (!_mockCommentsDb.containsKey(postId)) {
-          _mockCommentsDb[postId] = [];
-        }
-        _mockCommentsDb[postId]!.add(newComment);
-
-        // Update local counts
-        final localIndex = _posts.indexWhere((p) => p.id == postId);
-        if (localIndex != -1) {
-          final p = _posts[localIndex];
-          _posts[localIndex] = p.copyWith(commentsCount: p.commentsCount + 1);
-          _safeNotify();
-        }
-
-        final dbIndex = _mockPostsDb.indexWhere((p) => p.id == postId);
-        if (dbIndex != -1) {
-          _mockPostsDb[dbIndex] = _mockPostsDb[dbIndex].copyWith(
-            commentsCount: _mockPostsDb[dbIndex].commentsCount + 1,
-          );
-        }
-
-        return newComment;
-      } else {
-        final response = await Supabase.instance.client
-            .from('comments')
-            .insert({
-              'post_id': postId,
-              'user_id': user.id,
-              'content': content.trim(),
-            })
-            .select('''
-              id, post_id, user_id, content, created_at,
-              profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
-              comment_likes(user_id)
-            ''')
-            .single();
-
-        final newComment = CommentModel.fromJson(
-          response,
-          currentUserId: user.id,
-        );
-
-        // Update local count
-        final localIndex = _posts.indexWhere((p) => p.id == postId);
-        if (localIndex != -1) {
-          final p = _posts[localIndex];
-          _posts[localIndex] = p.copyWith(commentsCount: p.commentsCount + 1);
-          _safeNotify();
-        }
-
-        return newComment;
+      // Update local count
+      final localIndex = _posts.indexWhere((p) => p.id == postId);
+      if (localIndex != -1) {
+        final p = _posts[localIndex];
+        _posts[localIndex] = p.copyWith(commentsCount: p.commentsCount + 1);
+        _safeNotify();
       }
+
+      return newComment;
     } catch (e) {
       _setError(e.toString());
       return null;
@@ -605,24 +429,12 @@ class SocialService extends ChangeNotifier {
     if (user == null) return false;
 
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        return true;
-      } else {
-        if (currentlyLiked) {
-          await Supabase.instance.client
-              .from('comment_likes')
-              .delete()
-              .eq('comment_id', commentId)
-              .eq('user_id', user.id);
-        } else {
-          await Supabase.instance.client.from('comment_likes').insert({
-            'comment_id': commentId,
-            'user_id': user.id,
-          });
-        }
-        return true;
-      }
+      await _repository.likeComment(
+        commentId: commentId,
+        userId: user.id,
+        currentlyLiked: currentlyLiked,
+      );
+      return true;
     } catch (e) {
       _setError(e.toString());
       return false;
@@ -634,40 +446,28 @@ class SocialService extends ChangeNotifier {
     _clearError();
     _setLoading(true);
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        _mockPostsDb.removeWhere((p) => p.id == postId);
-        _posts.removeWhere((p) => p.id == postId);
-        _safeNotify();
-        return true;
-      } else {
-        final user = _authService.currentUser;
-        if (user == null) return false;
+      final user = _authService.currentUser;
+      if (user == null) return false;
 
-        // Try deleting image from Yandex Cloud storage if it exists
-        final postIndex = _posts.indexWhere((p) => p.id == postId);
-        if (postIndex != -1) {
-          final imageUrl = _posts[postIndex].imageUrl;
-          if (imageUrl != null && imageUrl.isNotEmpty) {
-            debugPrint('SocialService.deletePost: Deleting image from storage: $imageUrl');
-            try {
-              await ImageUploadService.deletePostImage(imageUrl);
-            } catch (e) {
-              debugPrint('SocialService.deletePost: Failed to delete image from S3 storage: $e');
-            }
+      // Try deleting image from Yandex Cloud storage if it exists
+      final postIndex = _posts.indexWhere((p) => p.id == postId);
+      if (postIndex != -1) {
+        final imageUrl = _posts[postIndex].imageUrl;
+        if (imageUrl != null && imageUrl.isNotEmpty) {
+          debugPrint('SocialService.deletePost: Deleting image from storage: $imageUrl');
+          try {
+            await ImageUploadService.deletePostImage(imageUrl);
+          } catch (e) {
+            debugPrint('SocialService.deletePost: Failed to delete image from S3 storage: $e');
           }
         }
-
-        await Supabase.instance.client
-            .from('posts')
-            .delete()
-            .eq('id', postId)
-            .eq('user_id', user.id);
-
-        _posts.removeWhere((p) => p.id == postId);
-        _safeNotify();
-        return true;
       }
+
+      await _repository.deletePost(postId: postId, userId: user.id);
+
+      _posts.removeWhere((p) => p.id == postId);
+      _safeNotify();
+      return true;
     } catch (e) {
       _setError(e.toString());
       return false;
@@ -680,53 +480,21 @@ class SocialService extends ChangeNotifier {
   Future<bool> deleteComment(int postId, int commentId) async {
     _clearError();
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        if (_mockCommentsDb.containsKey(postId)) {
-          _mockCommentsDb[postId]!.removeWhere((c) => c.id == commentId);
-        }
+      final user = _authService.currentUser;
+      if (user == null) return false;
 
-        // Update local count
-        final localIndex = _posts.indexWhere((p) => p.id == postId);
-        if (localIndex != -1) {
-          final p = _posts[localIndex];
-          if (p.commentsCount > 0) {
-            _posts[localIndex] = p.copyWith(commentsCount: p.commentsCount - 1);
-            _safeNotify();
-          }
-        }
+      await _repository.deleteComment(commentId: commentId, userId: user.id);
 
-        final dbIndex = _mockPostsDb.indexWhere((p) => p.id == postId);
-        if (dbIndex != -1) {
-          final p = _mockPostsDb[dbIndex];
-          if (p.commentsCount > 0) {
-            _mockPostsDb[dbIndex] = p.copyWith(
-              commentsCount: p.commentsCount - 1,
-            );
-          }
+      // Update local count
+      final localIndex = _posts.indexWhere((p) => p.id == postId);
+      if (localIndex != -1) {
+        final p = _posts[localIndex];
+        if (p.commentsCount > 0) {
+          _posts[localIndex] = p.copyWith(commentsCount: p.commentsCount - 1);
+          _safeNotify();
         }
-        return true;
-      } else {
-        final user = _authService.currentUser;
-        if (user == null) return false;
-
-        await Supabase.instance.client
-            .from('comments')
-            .delete()
-            .eq('id', commentId)
-            .eq('user_id', user.id);
-
-        // Update local count
-        final localIndex = _posts.indexWhere((p) => p.id == postId);
-        if (localIndex != -1) {
-          final p = _posts[localIndex];
-          if (p.commentsCount > 0) {
-            _posts[localIndex] = p.copyWith(commentsCount: p.commentsCount - 1);
-            _safeNotify();
-          }
-        }
-        return true;
       }
+      return true;
     } catch (e) {
       _setError(e.toString());
       return false;
@@ -737,34 +505,15 @@ class SocialService extends ChangeNotifier {
   Future<UserModel?> fetchUserProfile(String userId) async {
     _clearError();
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 300));
-
-        if (_authService.currentUser?.id == userId) {
-          return _authService.currentUser!;
-        }
-
-        final profile = _mockProfiles.firstWhere(
-          (u) => u.id == userId,
-          orElse: () => _mockProfiles.first,
-        );
-        return profile;
-      } else {
-        final response = await Supabase.instance.client
-            .from('profiles')
-            .select()
-            .eq('id', userId)
-            .single();
-
-        return UserModel.fromJson(response, '');
+      if (_authService.currentUser?.id == userId) {
+        return _authService.currentUser!;
       }
+      return await _repository.fetchUserProfile(userId);
     } catch (e) {
       _setError(e.toString());
       return null;
     }
   }
-
-
 
   /// Search users by username, first name or last name
   Future<List<UserModel>> searchUsers(String query) async {
@@ -780,55 +529,21 @@ class SocialService extends ChangeNotifier {
 
       if (cleanQuery.isEmpty) return [];
 
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        final List<UserModel> results = [];
+      final results = await _repository.searchUsers(cleanQuery, searchByUsernameOnly);
 
-        for (final u in _mockProfiles) {
-          if (searchByUsernameOnly) {
-            if (u.username.toLowerCase().contains(cleanQuery)) {
-              results.add(u);
-            }
-          } else {
-            if (u.username.toLowerCase().contains(cleanQuery) ||
-                u.firstName.toLowerCase().contains(cleanQuery) ||
-                u.lastName.toLowerCase().contains(cleanQuery)) {
-              results.add(u);
-            }
-          }
-        }
-
-        // Also check current user
-        final currentUser = _authService.currentUser;
-        if (currentUser != null &&
-            !results.any((u) => u.id == currentUser.id)) {
-          if (searchByUsernameOnly) {
-            if (currentUser.username.toLowerCase().contains(cleanQuery)) {
-              results.add(currentUser);
-            }
-          } else {
-            if (currentUser.username.toLowerCase().contains(cleanQuery) ||
+      // Make sure we include current user if they match the query
+      final currentUser = _authService.currentUser;
+      if (currentUser != null && !results.any((u) => u.id == currentUser.id)) {
+        final match = searchByUsernameOnly 
+            ? currentUser.username.toLowerCase().contains(cleanQuery)
+            : (currentUser.username.toLowerCase().contains(cleanQuery) ||
                 currentUser.firstName.toLowerCase().contains(cleanQuery) ||
-                currentUser.lastName.toLowerCase().contains(cleanQuery)) {
-              results.add(currentUser);
-            }
-          }
+                currentUser.lastName.toLowerCase().contains(cleanQuery));
+        if (match) {
+          results.add(currentUser);
         }
-        return results;
-      } else {
-        var req = Supabase.instance.client.from('profiles').select();
-        if (searchByUsernameOnly) {
-          req = req.ilike('username', '%$cleanQuery%');
-        } else {
-          req = req.or(
-            'username.ilike.%$cleanQuery%,first_name.ilike.%$cleanQuery%,last_name.ilike.%$cleanQuery%',
-          );
-        }
-
-        final response = await req.limit(20);
-        final List<dynamic> data = response;
-        return data.map((json) => UserModel.fromJson(json, '')).toList();
       }
+      return results;
     } catch (e) {
       _setError(e.toString());
       return [];
@@ -839,32 +554,8 @@ class SocialService extends ChangeNotifier {
   Future<List<PostModel>> fetchUserPosts(String userId) async {
     _clearError();
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        return _mockPostsDb.where((p) => p.userId == userId).toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      } else {
-        final user = _authService.currentUser;
-        final response = await Supabase.instance.client
-            .from('posts')
-            .select('''
-              id, content, created_at, user_id,
-              link_url, link_title,
-              image_url, image_format, image_width, image_height, image_uploaded_at, image_urls,
-              profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url),
-              post_likes(user_id),
-              comments(id),
-              polls:polls(question, options),
-              poll_votes:poll_votes(user_id, option_index)
-            ''')
-            .eq('user_id', userId)
-            .order('created_at', ascending: false);
-
-        final List<dynamic> data = response;
-        return data
-            .map((json) => PostModel.fromJson(json, currentUserId: user?.id))
-            .toList();
-      }
+      final user = _authService.currentUser;
+      return await _repository.fetchUserPosts(userId, user?.id);
     } catch (e) {
       _setError(e.toString());
       return [];
@@ -874,30 +565,7 @@ class SocialService extends ChangeNotifier {
   /// Get user stats: post count, total likes received
   Future<Map<String, int>> fetchUserStats(String userId) async {
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        final userPosts = _mockPostsDb
-            .where((p) => p.userId == userId)
-            .toList();
-        final totalLikes = userPosts.fold<int>(
-          0,
-          (sum, p) => sum + p.likesCount,
-        );
-        return {'posts': userPosts.length, 'likes': totalLikes};
-      } else {
-        final postsResponse = await Supabase.instance.client
-            .from('posts')
-            .select('id, post_likes(user_id)')
-            .eq('user_id', userId);
-        final List<dynamic> data = postsResponse;
-        int totalLikes = 0;
-        for (final post in data) {
-          if (post['post_likes'] != null) {
-            totalLikes += (post['post_likes'] as List).length;
-          }
-        }
-        return {'posts': data.length, 'likes': totalLikes};
-      }
+      return await _repository.fetchUserStats(userId);
     } catch (e) {
       return {'posts': 0, 'likes': 0};
     }
@@ -933,44 +601,127 @@ class SocialService extends ChangeNotifier {
     _safeNotify();
 
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        // Update mock database
-        final dbIndex = _mockPostsDb.indexWhere((p) => p.id == postId);
-        if (dbIndex != -1) {
-          final dbPost = _mockPostsDb[dbIndex];
-          if (dbPost.poll != null) {
-            final dbVotes = List<int>.from(dbPost.poll!.optionVotes);
-            if (optionIndex >= 0 && optionIndex < dbVotes.length) {
-              dbVotes[optionIndex]++;
-            }
-            _mockPostsDb[dbIndex] = dbPost.copyWith(
-              poll: dbPost.poll!.copyWith(
-                optionVotes: dbVotes,
-                totalVotes: dbPost.poll!.totalVotes + 1,
-                userVotedIndex: optionIndex,
-              ),
-            );
-          }
-        }
-        return true;
-      } else {
-        await Supabase.instance.client.from('poll_votes').insert({
-          'post_id': postId,
-          'user_id': user.id,
-          'option_index': optionIndex,
-        });
+      await _repository.voteInPoll(
+        postId: postId,
+        userId: user.id,
+        optionIndex: optionIndex,
+      );
 
+      if (!_isMockMode) {
         // Refresh in background to get precise state
         fetchPosts();
-        return true;
       }
+      return true;
     } catch (e) {
       // Revert if error
       _posts[localIndex] = originalPost;
       _safeNotify();
       _setError(e.toString());
       return false;
+    }
+  }
+
+  // ── Подписки (follows) ──
+
+  Future<bool> followUser(String userId) async {
+    final me = _authService.currentUser;
+    if (me == null || me.id == userId) return false;
+    try {
+      await _repository.followUser(followerId: me.id, followeeId: userId);
+      return true;
+    } catch (e) {
+      _setError(AppError.from(e).message);
+      return false;
+    }
+  }
+
+  Future<bool> unfollowUser(String userId) async {
+    final me = _authService.currentUser;
+    if (me == null) return false;
+    try {
+      await _repository.unfollowUser(followerId: me.id, followeeId: userId);
+      return true;
+    } catch (e) {
+      _setError(AppError.from(e).message);
+      return false;
+    }
+  }
+
+  Future<bool> isFollowing(String userId) async {
+    final me = _authService.currentUser;
+    if (me == null) return false;
+    try {
+      return await _repository.isFollowing(
+        followerId: me.id,
+        followeeId: userId,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<Map<String, int>> fetchFollowCounts(String userId) async {
+    try {
+      return await _repository.fetchFollowCounts(userId);
+    } catch (_) {
+      return {'followers': 0, 'following': 0};
+    }
+  }
+
+  /// Лента «Подписки» — посты тех, на кого подписан текущий пользователь.
+  Future<List<PostModel>> fetchFollowingFeed({
+    int limit = 10,
+    int offset = 0,
+  }) async {
+    final me = _authService.currentUser;
+    if (me == null) return [];
+    try {
+      return await _repository.fetchFollowingFeed(
+        me.id,
+        limit: limit,
+        offset: offset,
+      );
+    } catch (e) {
+      _setError(AppError.from(e).message);
+      return [];
+    }
+  }
+
+  // ── Уведомления ──
+
+  Future<List<NotificationModel>> fetchNotifications() async {
+    final me = _authService.currentUser;
+    if (me == null) return [];
+    try {
+      return await _repository.fetchNotifications(me.id);
+    } catch (e) {
+      _setError(AppError.from(e).message);
+      return [];
+    }
+  }
+
+  Future<void> refreshUnreadCount() async {
+    final me = _authService.currentUser;
+    if (me == null) return;
+    try {
+      _unreadNotifications =
+          await _repository.fetchUnreadNotificationsCount(me.id);
+      _safeNotify();
+    } catch (_) {
+      // тихо игнорируем — бейдж не критичен
+    }
+  }
+
+  /// Помечает все уведомления прочитанными и обнуляет бейдж.
+  Future<void> markNotificationsRead() async {
+    final me = _authService.currentUser;
+    if (me == null) return;
+    _unreadNotifications = 0;
+    _safeNotify();
+    try {
+      await _repository.markNotificationsRead(me.id);
+    } catch (_) {
+      // не критично
     }
   }
 

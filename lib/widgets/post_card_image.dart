@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class PostCardImage extends StatefulWidget {
   final String imageUrl;
@@ -18,8 +19,6 @@ class PostCardImage extends StatefulWidget {
 }
 
 class _PostCardImageState extends State<PostCardImage> {
-  bool _fullImageLoaded = false;
-
   double get _aspectRatio {
     if (widget.imageFormat == '16:9') return 16 / 9;
     if (widget.imageFormat == '9:16') return 9 / 16;
@@ -57,25 +56,27 @@ class _PostCardImageState extends State<PostCardImage> {
           borderRadius: BorderRadius.circular(16),
           child: AspectRatio(
             aspectRatio: _aspectRatio,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                // 1. Instant blurred low-res thumbnail
-                Image.network(
-                  widget.thumbnailUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    color: isDark ? const Color(0xFF1E1E20) : const Color(0xFFE5E5EA),
-                    child: Icon(
-                      Icons.image_outlined,
-                      color: isDark ? Colors.white24 : Colors.black26,
-                      size: 32,
+            child: CachedNetworkImage(
+              imageUrl: widget.imageUrl,
+              fit: BoxFit.cover,
+              placeholder: (context, url) => Stack(
+                fit: StackFit.expand,
+                children: [
+                  CachedNetworkImage(
+                    imageUrl: widget.thumbnailUrl,
+                    fit: BoxFit.cover,
+                    placeholder: (context, url) => Container(
+                      color: isDark ? const Color(0xFF1E1E20) : const Color(0xFFE5E5EA),
+                    ),
+                    errorWidget: (context, url, error) => Container(
+                      color: isDark ? const Color(0xFF1E1E20) : const Color(0xFFE5E5EA),
+                      child: Icon(
+                        Icons.image_outlined,
+                        color: isDark ? Colors.white24 : Colors.black26,
+                        size: 32,
+                      ),
                     ),
                   ),
-                ),
-
-                // Soft blur overlay over the thumbnail during download
-                if (!_fullImageLoaded)
                   Positioned.fill(
                     child: ClipRRect(
                       child: BackdropFilter(
@@ -86,56 +87,21 @@ class _PostCardImageState extends State<PostCardImage> {
                       ),
                     ),
                   ),
-
-                // 2. High-res image lazy-loading on top
-                Image.network(
-                  widget.imageUrl,
-                  fit: BoxFit.cover,
-                  frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                    if (wasSynchronouslyLoaded) {
-                      // Cache hit, render instantly
-                      _markFullImageLoaded();
-                      return child;
-                    }
-                    
-                    // Trigger state change to clear thumbnail blur when fade-in finishes
-                    if (frame != null && !_fullImageLoaded) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted && !_fullImageLoaded) {
-                          setState(() {
-                            _fullImageLoaded = true;
-                          });
-                        }
-                      });
-                    }
-
-                    return AnimatedOpacity(
-                      opacity: frame == null ? 0.0 : 1.0,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeIn,
-                      child: child,
-                    );
-                  },
-                  errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
+                ],
+              ),
+              errorWidget: (context, url, error) => Container(
+                color: isDark ? const Color(0xFF1E1E20) : const Color(0xFFE5E5EA),
+                child: Icon(
+                  Icons.image_outlined,
+                  color: isDark ? Colors.white24 : Colors.black26,
+                  size: 32,
                 ),
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
-  }
-
-  void _markFullImageLoaded() {
-    if (!_fullImageLoaded) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_fullImageLoaded) {
-          setState(() {
-            _fullImageLoaded = true;
-          });
-        }
-      });
-    }
   }
 }
 
@@ -155,19 +121,16 @@ class FullScreenImageViewer extends StatelessWidget {
             minScale: 0.5,
             maxScale: 4.0,
             child: Center(
-              child: Image.network(
-                imageUrl,
+              child: CachedNetworkImage(
+                imageUrl: imageUrl,
                 fit: BoxFit.contain,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return const Center(
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white70,
-                    ),
-                  );
-                },
-                errorBuilder: (context, error, stackTrace) => const Center(
+                placeholder: (context, url) => const Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white70,
+                  ),
+                ),
+                errorWidget: (context, url, error) => const Center(
                   child: Icon(
                     Icons.error_outline_rounded,
                     color: Colors.white30,

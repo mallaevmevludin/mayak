@@ -6,6 +6,7 @@ import 'services/auth_service.dart';
 import 'services/supabase_config.dart';
 import 'services/social_service.dart';
 import 'services/job_service.dart';
+import 'services/chat_service.dart';
 import 'services/theme_service.dart';
 import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
@@ -58,6 +59,12 @@ void main() async {
               JobService(Provider.of<AuthService>(context, listen: false)),
           update: (context, authService, previousJobService) =>
               previousJobService ?? JobService(authService),
+        ),
+        ChangeNotifierProxyProvider<AuthService, ChatService>(
+          create: (context) =>
+              ChatService(Provider.of<AuthService>(context, listen: false)),
+          update: (context, authService, previousChatService) =>
+              previousChatService ?? ChatService(authService),
         ),
       ],
       child: const MainApp(),

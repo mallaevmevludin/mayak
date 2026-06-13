@@ -1,0 +1,441 @@
+import 'dart:async';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../models/post_model.dart';
+import '../../../models/comment_model.dart';
+import '../../../models/user_model.dart';
+import '../../../models/notification_model.dart';
+import 'social_repository.dart';
+
+class SupabaseSocialRepository implements SocialRepository {
+  final SupabaseClient _client = Supabase.instance.client;
+
+  @override
+  Future<List<PostModel>> fetchPosts(String? currentUserId, {int limit = 10, int offset = 0, String? tag}) async {
+    var query = _client
+        .from('posts')
+        .select('''
+          id, content, created_at, user_id,
+          link_url, link_title,
+          image_url, image_format, image_width, image_height, image_uploaded_at, image_urls,
+          profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
+          post_likes(user_id),
+          comments(id),
+          polls:polls(question, options),
+          poll_votes:poll_votes(user_id, option_index),
+          job_id,
+          jobs:job_id(*, profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified))
+        ''');
+
+    if (tag != null && tag.isNotEmpty) {
+      query = query.ilike('content', '%#$tag%');
+    }
+
+    final response = await query
+        .order('created_at', ascending: false)
+        .range(offset, offset + limit - 1);
+
+    final List<dynamic> data = response;
+    return data
+        .map((json) => PostModel.fromJson(json, currentUserId: currentUserId))
+        .toList();
+  }
+
+  @override
+  Future<PostModel?> fetchPost(int postId, String? currentUserId) async {
+    final response = await _client
+        .from('posts')
+        .select('''
+          id, content, created_at, user_id,
+          link_url, link_title,
+          image_url, image_format, image_width, image_height, image_uploaded_at, image_urls,
+          profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
+          post_likes(user_id),
+          comments(id),
+          polls:polls(question, options),
+          poll_votes:poll_votes(user_id, option_index),
+          job_id,
+          jobs:job_id(*, profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified))
+        ''')
+        .eq('id', postId)
+        .single();
+    return PostModel.fromJson(response, currentUserId: currentUserId);
+  }
+
+  @override
+  Future<PostModel> createPost({
+    required String userId,
+    required String content,
+    String? linkUrl,
+    String? linkTitle,
+    String? pollQuestion,
+    List<String>? pollOptions,
+    String? imageUrl,
+    String? imageFormat,
+    int? imageWidth,
+    int? imageHeight,
+    List<String>? imageUrls,
+    int? jobId,
+  }) async {
+    final Map<String, dynamic> insertData = {
+      'user_id': userId,
+      'content': content.trim(),
+      'link_url': linkUrl,
+      'link_title': linkTitle,
+      'image_url': imageUrl ?? (imageUrls != null && imageUrls.isNotEmpty ? imageUrls.first : null),
+      'image_format': imageFormat,
+      'image_width': imageWidth,
+      'image_height': imageHeight,
+      'image_uploaded_at': (imageUrl != null || (imageUrls != null && imageUrls.isNotEmpty))
+          ? DateTime.now().toUtc().toIso8601String()
+          : null,
+      'image_urls': imageUrls ?? (imageUrl != null ? [imageUrl] : const []),
+      'job_id': jobId,
+    };
+
+    final response = await _client
+        .from('posts')
+        .insert(insertData)
+        .select('id')
+        .single();
+
+    final newPostId = response['id'] as int;
+
+    if (pollQuestion != null && pollOptions != null && pollOptions.isNotEmpty) {
+      await _client.from('polls').insert({
+        'post_id': newPostId,
+        'question': pollQuestion,
+        'options': pollOptions,
+      });
+    }
+
+    final fullPost = await fetchPost(newPostId, userId);
+    if (fullPost == null) {
+      throw Exception('Не удалось загрузить созданный пост');
+    }
+    return fullPost;
+  }
+
+  @override
+  Future<void> likePost({
+    required String userId,
+    required int postId,
+    required bool currentlyLiked,
+  }) async {
+    if (currentlyLiked) {
+      await _client
+          .from('post_likes')
+          .delete()
+          .eq('post_id', postId)
+          .eq('user_id', userId);
+    } else {
+      await _client.from('post_likes').insert({
+        'post_id': postId,
+        'user_id': userId,
+      });
+    }
+  }
+
+  @override
+  Future<List<CommentModel>> fetchComments(int postId, String? currentUserId) async {
+    final response = await _client
+        .from('comments')
+        .select('''
+          id, post_id, user_id, content, created_at,
+          profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
+          comment_likes(user_id)
+        ''')
+        .eq('post_id', postId)
+        .order('created_at', ascending: true);
+
+    final List<dynamic> data = response;
+    return data
+        .map((json) => CommentModel.fromJson(json, currentUserId: currentUserId))
+        .toList();
+  }
+
+  @override
+  Future<CommentModel> addComment({
+    required int postId,
+    required String userId,
+    required String content,
+  }) async {
+    final response = await _client
+        .from('comments')
+        .insert({
+          'post_id': postId,
+          'user_id': userId,
+          'content': content.trim(),
+        })
+        .select('''
+          id, post_id, user_id, content, created_at,
+          profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
+          comment_likes(user_id)
+        ''')
+        .single();
+
+    return CommentModel.fromJson(response, currentUserId: userId);
+  }
+
+  @override
+  Future<void> likeComment({
+    required int commentId,
+    required String userId,
+    required bool currentlyLiked,
+  }) async {
+    if (currentlyLiked) {
+      await _client
+          .from('comment_likes')
+          .delete()
+          .eq('comment_id', commentId)
+          .eq('user_id', userId);
+    } else {
+      await _client.from('comment_likes').insert({
+        'comment_id': commentId,
+        'user_id': userId,
+      });
+    }
+  }
+
+  @override
+  Future<void> deletePost({required int postId, required String userId}) async {
+    await _client
+        .from('posts')
+        .delete()
+        .eq('id', postId)
+        .eq('user_id', userId);
+  }
+
+  @override
+  Future<void> deleteComment({required int commentId, required String userId}) async {
+    await _client
+        .from('comments')
+        .delete()
+        .eq('id', commentId)
+        .eq('user_id', userId);
+  }
+
+  @override
+  Future<UserModel?> fetchUserProfile(String userId) async {
+    final response = await _client
+        .from('profiles')
+        .select()
+        .eq('id', userId)
+        .single();
+
+    return UserModel.fromJson(response, '');
+  }
+
+  @override
+  Future<List<UserModel>> searchUsers(String query, bool searchByUsernameOnly) async {
+    String cleanQuery = query.trim().toLowerCase();
+    if (cleanQuery.startsWith('@')) {
+      cleanQuery = cleanQuery.substring(1).trim();
+    }
+    if (cleanQuery.isEmpty) return [];
+
+    if (searchByUsernameOnly) {
+      final response =
+          await _client.from('profiles').select().ilike('username', '%$cleanQuery%').limit(20);
+      return (response as List)
+          .map((json) => UserModel.fromJson(json, ''))
+          .toList();
+    }
+
+    // Полнотекстовый поиск (русский словарь) через RPC search_profiles.
+    final response =
+        await _client.rpc('search_profiles', params: {'q': cleanQuery});
+    return (response as List)
+        .map((json) => UserModel.fromJson(json as Map<String, dynamic>, ''))
+        .toList();
+  }
+
+  @override
+  Future<List<PostModel>> fetchUserPosts(String userId, String? currentUserId) async {
+    final response = await _client
+        .from('posts')
+        .select('''
+          id, content, created_at, user_id,
+          link_url, link_title,
+          image_url, image_format, image_width, image_height, image_uploaded_at, image_urls,
+          profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url),
+          post_likes(user_id),
+          comments(id),
+          polls:polls(question, options),
+          poll_votes:poll_votes(user_id, option_index),
+          job_id,
+          jobs:job_id(*, profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified))
+        ''')
+        .eq('user_id', userId)
+        .order('created_at', ascending: false);
+
+    final List<dynamic> data = response;
+    return data
+        .map((json) => PostModel.fromJson(json, currentUserId: currentUserId))
+        .toList();
+  }
+
+  @override
+  Future<Map<String, int>> fetchUserStats(String userId) async {
+    final postsResponse = await _client
+        .from('posts')
+        .select('id, post_likes(user_id)')
+        .eq('user_id', userId);
+    final List<dynamic> data = postsResponse;
+    int totalLikes = 0;
+    for (final post in data) {
+      if (post['post_likes'] != null) {
+        totalLikes += (post['post_likes'] as List).length;
+      }
+    }
+    return {'posts': data.length, 'likes': totalLikes};
+  }
+
+  @override
+  Future<void> voteInPoll({
+    required int postId,
+    required String userId,
+    required int optionIndex,
+  }) async {
+    await _client.from('poll_votes').insert({
+      'post_id': postId,
+      'user_id': userId,
+      'option_index': optionIndex,
+    });
+  }
+
+  // ── Подписки (follows) ──
+
+  static const String _postSelect = '''
+          id, content, created_at, user_id,
+          link_url, link_title,
+          image_url, image_format, image_width, image_height, image_uploaded_at, image_urls,
+          profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified),
+          post_likes(user_id),
+          comments(id),
+          polls:polls(question, options),
+          poll_votes:poll_votes(user_id, option_index),
+          job_id,
+          jobs:job_id(*, profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified))
+        ''';
+
+  @override
+  Future<void> followUser({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    await _client.from('follows').insert({
+      'follower_id': followerId,
+      'followee_id': followeeId,
+    });
+  }
+
+  @override
+  Future<void> unfollowUser({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    await _client
+        .from('follows')
+        .delete()
+        .eq('follower_id', followerId)
+        .eq('followee_id', followeeId);
+  }
+
+  @override
+  Future<bool> isFollowing({
+    required String followerId,
+    required String followeeId,
+  }) async {
+    final res = await _client
+        .from('follows')
+        .select('follower_id')
+        .eq('follower_id', followerId)
+        .eq('followee_id', followeeId)
+        .limit(1);
+    return (res as List).isNotEmpty;
+  }
+
+  @override
+  Future<Map<String, int>> fetchFollowCounts(String userId) async {
+    final followers = await _client
+        .from('follows')
+        .select('follower_id')
+        .eq('followee_id', userId);
+    final following = await _client
+        .from('follows')
+        .select('followee_id')
+        .eq('follower_id', userId);
+    return {
+      'followers': (followers as List).length,
+      'following': (following as List).length,
+    };
+  }
+
+  @override
+  Future<List<PostModel>> fetchFollowingFeed(
+    String currentUserId, {
+    int limit = 10,
+    int offset = 0,
+  }) async {
+    final follows = await _client
+        .from('follows')
+        .select('followee_id')
+        .eq('follower_id', currentUserId);
+    final ids = (follows as List)
+        .map((e) => e['followee_id'] as String)
+        .toList();
+    if (ids.isEmpty) return [];
+
+    final response = await _client
+        .from('posts')
+        .select(_postSelect)
+        .inFilter('user_id', ids)
+        .order('created_at', ascending: false)
+        .range(offset, offset + limit - 1);
+
+    return (response as List)
+        .map((json) => PostModel.fromJson(json, currentUserId: currentUserId))
+        .toList();
+  }
+
+  // ── Уведомления ──
+
+  @override
+  Future<List<NotificationModel>> fetchNotifications(
+    String userId, {
+    int limit = 50,
+  }) async {
+    final response = await _client
+        .from('notifications')
+        .select('''
+          id, type, post_id, comment_id, is_read, created_at, actor_id,
+          actor:actor_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified)
+        ''')
+        .eq('user_id', userId)
+        .order('created_at', ascending: false)
+        .limit(limit);
+
+    return (response as List)
+        .map((json) => NotificationModel.fromJson(json))
+        .toList();
+  }
+
+  @override
+  Future<int> fetchUnreadNotificationsCount(String userId) async {
+    final response = await _client
+        .from('notifications')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('is_read', false);
+    return (response as List).length;
+  }
+
+  @override
+  Future<void> markNotificationsRead(String userId) async {
+    await _client
+        .from('notifications')
+        .update({'is_read': true})
+        .eq('user_id', userId)
+        .eq('is_read', false);
+  }
+}

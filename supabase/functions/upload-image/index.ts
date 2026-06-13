@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from "https://esm.sh/@aws-sdk/client-s3";
 
 const corsHeaders = {
@@ -7,18 +8,33 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
 };
 
-function getUserId(req: Request): string {
+async function getUserId(req: Request): Promise<string> {
   const authHeader = req.headers.get("Authorization");
-  if (!authHeader) return "anonymous";
-  try {
-    const token = authHeader.split(" ")[1];
-    const payloadBase64 = token.split(".")[1];
-    const payloadDecoded = atob(payloadBase64.replace(/-/g, "+").replace(/_/g, "/"));
-    const payload = JSON.parse(payloadDecoded);
-    return payload.sub || "anonymous";
-  } catch {
-    return "anonymous";
+  if (!authHeader) {
+    throw new Error("Missing Authorization header");
   }
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    throw new Error("Missing token in Authorization header");
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        Authorization: authHeader,
+      },
+    },
+  });
+
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) {
+    throw new Error(error?.message || "Invalid session");
+  }
+
+  return user.id;
 }
 
 Deno.serve(async (req: Request) => {
@@ -32,6 +48,19 @@ Deno.serve(async (req: Request) => {
       status: 405,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });
+  }
+
+  let userId: string;
+  try {
+    userId = await getUserId(req);
+  } catch (err: any) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized", details: err.message }),
+      {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      }
+    );
   }
 
   try {
@@ -48,8 +77,6 @@ Deno.serve(async (req: Request) => {
         }
       );
     }
-
-    const userId = getUserId(req);
 
     const s3Client = new S3Client({
       region: "ru-central1",

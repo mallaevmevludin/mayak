@@ -1,3 +1,5 @@
+import 'job_model.dart';
+
 class PollModel {
   final String question;
   final List<String> options;
@@ -77,6 +79,8 @@ class PostModel {
   final int? imageHeight;
   final DateTime? imageUploadedAt;
   final List<String> imageUrls;
+  final int? jobId;
+  final JobModel? job;
 
   PostModel({
     required this.id,
@@ -101,6 +105,8 @@ class PostModel {
     this.imageHeight,
     this.imageUploadedAt,
     this.imageUrls = const [],
+    this.jobId,
+    this.job,
   });
 
   PostModel copyWith({
@@ -126,6 +132,9 @@ class PostModel {
     int? imageHeight,
     DateTime? imageUploadedAt,
     List<String>? imageUrls,
+    int? jobId,
+    JobModel? job,
+    bool clearJob = false,
   }) {
     return PostModel(
       id: id ?? this.id,
@@ -150,6 +159,8 @@ class PostModel {
       imageHeight: imageHeight ?? this.imageHeight,
       imageUploadedAt: imageUploadedAt ?? this.imageUploadedAt,
       imageUrls: imageUrls ?? this.imageUrls,
+      jobId: jobId ?? this.jobId,
+      job: clearJob ? null : (job ?? this.job),
     );
   }
 
@@ -249,6 +260,14 @@ class PostModel {
       parsedImageUrls = [json['image_url'] as String];
     }
 
+    // Parse job if any
+    final jobVal = json['jobs'] != null
+        ? JobModel.fromJson(json['jobs'] as Map<String, dynamic>)
+        : json['job'] != null
+            ? JobModel.fromJson(json['job'] as Map<String, dynamic>)
+            : null;
+    final jobIdVal = json['job_id'] as int? ?? jobVal?.id;
+
     return PostModel(
       id: json['id'] as int? ?? 0,
       userId: json['user_id'] as String? ?? '',
@@ -292,6 +311,8 @@ class PostModel {
           ? DateTime.parse(json['image_uploaded_at'] as String)
           : null,
       imageUrls: parsedImageUrls,
+      jobId: jobIdVal,
+      job: jobVal,
     );
   }
 
@@ -310,6 +331,8 @@ class PostModel {
       'image_height': imageHeight,
       'image_uploaded_at': imageUploadedAt?.toIso8601String(),
       'image_urls': imageUrls,
+      'job_id': jobId,
+      'job': job?.toJson(),
     };
   }
 }

@@ -1,13 +1,17 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/job_model.dart';
+import '../models/application_model.dart';
 import 'auth_service.dart';
 import 'supabase_config.dart';
+import 'jobs/job_repository.dart';
+import 'jobs/mock_job_repository.dart';
+import 'jobs/supabase_job_repository.dart';
 
 class JobService extends ChangeNotifier {
   final AuthService _authService;
+  late final JobRepository _repository;
 
   List<JobModel> _jobs = [];
   bool _isLoading = false;
@@ -17,84 +21,25 @@ class JobService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
+  bool _hasMore = true;
+  bool _isLoadingMore = false;
+  String? _currentCategory;
+
+  bool get hasMore => _hasMore;
+  bool get isLoadingMore => _isLoadingMore;
+
   bool get _isMockMode => !SupabaseConfig.isConfigured;
 
-  // Local mock databases
-  static final List<JobModel> _mockJobsDb = [
-    JobModel(
-      id: 1,
-      userId: 'mock-user-2',
-      userFirstName: 'Александр',
-      userLastName: 'Петров',
-      userUsername: 'sasha_fit',
-      userEmojiAvatar: '💪',
-      userIsVerified: true,
-      title: 'Сделать сайт-визитку на Flutter',
-      description: 'Необходимо разработать простой лендинг для рекламы спортивного зала. Вся текстовая информация и макет в Figma предоставлены. Жду ваших предложений.',
-      category: 'freelance',
-      budget: '15 000 ₽',
-      contactPhone: '+7 (999) 765-43-21',
-      contactTelegram: '@sasha_fit',
-      status: 'active',
-      createdAt: DateTime.now().subtract(const Duration(hours: 4)),
-    ),
-    JobModel(
-      id: 2,
-      userId: 'mock-user-3',
-      userFirstName: 'Мария',
-      userLastName: 'Смирнова',
-      userUsername: 'maria_zen',
-      userEmojiAvatar: '🧘',
-      userIsVerified: true,
-      title: 'Дизайн логотипа студии йоги',
-      description: 'Ищем талантливого дизайнера для создания минималистичного и нежного логотипа. Студия открывается через месяц, нужен также базовый брендбук.',
-      category: 'freelance',
-      budget: 'Договорная',
-      contactPhone: '+7 (999) 111-22-33',
-      contactTelegram: '@maria_zen',
-      status: 'active',
-      createdAt: DateTime.now().subtract(const Duration(hours: 12)),
-    ),
-    JobModel(
-      id: 3,
-      userId: 'mock-user-1',
-      userFirstName: 'Иван',
-      userLastName: 'Иванов',
-      userUsername: 'ivanov',
-      userEmojiAvatar: '🏃',
-      userIsVerified: false,
-      title: 'Укладка тротуарной плитки во дворе',
-      description: 'Требуется бригада мастеров для укладки тротуарной плитки во дворе частного дома. Площадь около 80 кв.м. Материалы закуплены, инструмент ваш.',
-      category: 'construction',
-      budget: '50 000 ₽',
-      contactPhone: '+7 (999) 123-45-67',
-      contactTelegram: '@ivan_master',
-      status: 'active',
-      createdAt: DateTime.now().subtract(const Duration(days: 1)),
-    ),
-    JobModel(
-      id: 4,
-      userId: 'mock-user-2',
-      userFirstName: 'Александр',
-      userLastName: 'Петров',
-      userUsername: 'sasha_fit',
-      userEmojiAvatar: '💪',
-      userIsVerified: true,
-      title: 'Перевозка мебели из Махачкалы в Каспийск',
-      description: 'Нужно перевезти диван, два кресла и шкаф-купе. Требуется большая машина (Газель) и два грузчика. Желательно в субботу утром.',
-      category: 'cargo',
-      budget: '7 000 ₽',
-      contactPhone: '+7 (999) 765-43-21',
-      contactTelegram: '@sasha_fit',
-      status: 'active',
-      createdAt: DateTime.now().subtract(const Duration(hours: 2)),
-    ),
-  ];
-
   JobService(this._authService) {
+    if (_isMockMode) {
+      _repository = MockJobRepository();
+    } else {
+      _repository = SupabaseJobRepository();
+    }
+
     _authService.addListener(_onAuthStatusChanged);
     if (_authService.currentUser != null) {
-      fetchJobs();
+      fetchJobs(isRefresh: true);
     }
   }
 
@@ -103,7 +48,7 @@ class JobService extends ChangeNotifier {
       _jobs = [];
       _safeNotify();
     } else {
-      fetchJobs();
+      fetchJobs(isRefresh: true);
     }
   }
 
@@ -155,49 +100,82 @@ class JobService extends ChangeNotifier {
     }
   }
 
-  /// Fetch jobs with optional category filter
-  Future<void> fetchJobs({String? category}) async {
+  String? _currentLocationType;
+  String? _currentCity;
+  String? _currentDistrict;
+  String? _currentWorkType;
+
+  /// Fetch jobs with optional category filter and pagination
+  Future<void> fetchJobs({
+    String? category,
+    bool isRefresh = false,
+    String? locationType,
+    String? city,
+    String? district,
+    String? workType,
+  }) async {
     final user = _authService.currentUser;
     if (user == null) return;
 
-    // Load cache first if empty
-    if (_jobs.isEmpty) {
-      await _loadCachedJobs();
+    final bool isCategoryChanged = category != _currentCategory;
+    final bool isFiltersChanged = isCategoryChanged ||
+        locationType != _currentLocationType ||
+        city != _currentCity ||
+        district != _currentDistrict ||
+        workType != _currentWorkType;
+
+    if (isRefresh || isFiltersChanged) {
+      _jobs = [];
+      _hasMore = true;
+      _isLoadingMore = false;
+      _currentCategory = category;
+      _currentLocationType = locationType;
+      _currentCity = city;
+      _currentDistrict = district;
+      _currentWorkType = workType;
     }
 
-    _setLoading(true);
+    if (!_hasMore) return;
+
+    final bool isFirstLoad = _jobs.isEmpty;
+    final int queryOffset = isFirstLoad ? 0 : _jobs.length;
+
+    // Load cache first if empty
+    if (isFirstLoad) {
+      await _loadCachedJobs();
+      _setLoading(true);
+    } else {
+      _isLoadingMore = true;
+      _safeNotify();
+    }
+
     _clearError();
 
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        var filtered = _mockJobsDb.where((j) => j.status == 'active');
-        if (category != null && category != 'all') {
-          filtered = filtered.where((j) => j.category == category);
-        }
-        _jobs = filtered.toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final fetched = await _repository.fetchJobs(
+        category: category,
+        limit: 10,
+        offset: queryOffset,
+        locationType: locationType,
+        city: city,
+        district: district,
+        workType: workType,
+      );
+
+      if (fetched.length < 10) {
+        _hasMore = false;
+      }
+
+      if (isRefresh || isFiltersChanged || isFirstLoad) {
+        _jobs = fetched;
       } else {
-        var queryBuilder = Supabase.instance.client
-            .from('jobs')
-            .select('''
-              id, title, description, category, budget, status, created_at, user_id,
-              contact_phone, contact_telegram, image_urls, rejection_comment,
-              profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified)
-            ''')
-            .eq('status', 'active');
+        final existingIds = _jobs.map((j) => j.id).toSet();
+        final newJobs = fetched.where((j) => !existingIds.contains(j.id)).toList();
+        _jobs.addAll(newJobs);
+      }
 
-        if (category != null && category != 'all') {
-          queryBuilder = queryBuilder.eq('category', category);
-        }
-
-        final response = await queryBuilder.order('created_at', ascending: false);
-        final List<dynamic> data = response;
-        _jobs = data.map((json) => JobModel.fromJson(json)).toList();
-
-        if (category == null || category == 'all') {
-          await _saveCachedJobs(_jobs);
-        }
+      if (!_isMockMode && (isRefresh || isFirstLoad) && (category == null || category == 'all') && locationType == null && city == null && district == null && workType == null) {
+        await _saveCachedJobs(_jobs);
       }
       _safeNotify();
     } catch (e) {
@@ -207,6 +185,8 @@ class JobService extends ChangeNotifier {
       }
     } finally {
       _setLoading(false);
+      _isLoadingMore = false;
+      _safeNotify();
     }
   }
 
@@ -216,24 +196,7 @@ class JobService extends ChangeNotifier {
     if (user == null) return [];
 
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        return _mockJobsDb.where((j) => j.userId == user.id).toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      } else {
-        final response = await Supabase.instance.client
-            .from('jobs')
-            .select('''
-              id, title, description, category, budget, status, created_at, user_id,
-              contact_phone, contact_telegram, image_urls, rejection_comment,
-              profiles:user_id(first_name, last_name, username, emoji_avatar, avatar_url, is_verified)
-            ''')
-            .eq('user_id', user.id)
-            .order('created_at', ascending: false);
-
-        final List<dynamic> data = response;
-        return data.map((json) => JobModel.fromJson(json)).toList();
-      }
+      return await _repository.fetchMyJobs(user.id);
     } catch (e) {
       debugPrint('Error fetching my jobs: $e');
       return [];
@@ -241,7 +204,7 @@ class JobService extends ChangeNotifier {
   }
 
   /// Create a new freelance job listing
-  Future<bool> createJob({
+  Future<JobModel?> createJob({
     required String title,
     required String description,
     required String category,
@@ -249,9 +212,14 @@ class JobService extends ChangeNotifier {
     String? contactPhone,
     String? contactTelegram,
     List<String>? imageUrls,
+    String locationType = 'city',
+    String? city,
+    String? district,
+    String? settlement,
+    String? workType,
   }) async {
     final user = _authService.currentUser;
-    if (user == null || title.trim().isEmpty || description.trim().isEmpty) return false;
+    if (user == null || title.trim().isEmpty || description.trim().isEmpty) return null;
 
     _setLoading(true);
     _clearError();
@@ -267,44 +235,58 @@ class JobService extends ChangeNotifier {
       userIsVerified: user.isVerified,
       title: title.trim(),
       description: description.trim(),
-      category: category,
+      category: JobCategory.fromString(category),
       budget: budget?.trim(),
       contactPhone: contactPhone?.trim(),
       contactTelegram: contactTelegram?.trim(),
-      status: 'pending',
+      status: JobStatus.pending,
       createdAt: DateTime.now(),
       imageUrls: imageUrls ?? const [],
+      rejectionComment: null,
+      locationType: LocationType.fromString(locationType),
+      city: city,
+      district: district,
+      settlement: settlement,
+      workType: workType != null ? WorkType.fromString(workType) : null,
     );
 
+    // Show optimistic job locally (e.g. for my jobs listing tab if applicable)
     _safeNotify();
 
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        _mockJobsDb.insert(0, optimisticJob);
-        return true;
-      } else {
-        final Map<String, dynamic> insertData = {
-          'user_id': user.id,
-          'title': title.trim(),
-          'description': description.trim(),
-          'category': category,
-          'budget': budget?.trim().isNotEmpty == true ? budget!.trim() : null,
-          'contact_phone': contactPhone?.trim().isNotEmpty == true ? contactPhone!.trim() : null,
-          'contact_telegram': contactTelegram?.trim().isNotEmpty == true ? contactTelegram!.trim() : null,
-          'status': 'pending',
-          'image_urls': imageUrls ?? const [],
-        };
+      final created = await _repository.createJob(
+        userId: user.id,
+        title: title,
+        description: description,
+        category: category,
+        budget: budget,
+        contactPhone: contactPhone,
+        contactTelegram: contactTelegram,
+        imageUrls: imageUrls,
+        locationType: locationType,
+        city: city,
+        district: district,
+        settlement: settlement,
+        workType: workType,
+      );
 
-        await Supabase.instance.client.from('jobs').insert(insertData);
-        // Do not call fetchJobs() as it only fetches 'active' jobs
-        return true;
+      if (_isMockMode) {
+        // In mock mode, replace the optimistic job with the returned job
+        final idx = _jobs.indexWhere((j) => j.id == optimisticJob.id);
+        if (idx != -1) {
+          _jobs[idx] = created;
+        }
+      } else {
+        // Add to local list in Supabase mode
+        _jobs.insert(0, created);
       }
+      _safeNotify();
+      return created;
     } catch (e) {
       debugPrint('Error creating job: $e');
       _safeNotify();
       _setError(e.toString());
-      return false;
+      return null;
     } finally {
       _setLoading(false);
     }
@@ -312,37 +294,96 @@ class JobService extends ChangeNotifier {
 
   /// Close a job (mark as closed)
   Future<bool> closeJob(int jobId) async {
+    return updateJobStatus(jobId, JobStatus.closed);
+  }
+
+  /// Update a job status (e.g. active, in_progress, completed, closed)
+  Future<bool> updateJobStatus(int jobId, JobStatus status) async {
     _clearError();
     _setLoading(true);
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        final dbIndex = _mockJobsDb.indexWhere((j) => j.id == jobId);
-        if (dbIndex != -1) {
-          _mockJobsDb[dbIndex] = _mockJobsDb[dbIndex].copyWith(status: 'closed');
+      final user = _authService.currentUser;
+      if (user == null) return false;
+
+      await _repository.updateJobStatus(jobId: jobId, userId: user.id, status: status.name);
+
+      // Update locally in _jobs list
+      final index = _jobs.indexWhere((j) => j.id == jobId);
+      if (index != -1) {
+        if (status == JobStatus.active) {
+          _jobs[index] = _jobs[index].copyWith(status: status);
+        } else {
+          // If it's not active anymore (e.g., in_progress, completed, closed), we remove it from the list of public jobs
+          _jobs.removeAt(index);
         }
-        _jobs.removeWhere((j) => j.id == jobId);
-        _safeNotify();
-        return true;
-      } else {
-        final user = _authService.currentUser;
-        if (user == null) return false;
-
-        await Supabase.instance.client
-            .from('jobs')
-            .update({'status': 'closed'})
-            .eq('id', jobId)
-            .eq('user_id', user.id);
-
-        _jobs.removeWhere((j) => j.id == jobId);
-        _safeNotify();
-        return true;
       }
+      _safeNotify();
+      return true;
     } catch (e) {
       _setError(e.toString());
       return false;
     } finally {
       _setLoading(false);
+    }
+  }
+
+  /// Apply for a job listing
+  Future<bool> applyToJob(int jobId) async {
+    final user = _authService.currentUser;
+    if (user == null) return false;
+
+    _setLoading(true);
+    _clearError();
+    try {
+      await _repository.applyToJob(jobId: jobId, applicantId: user.id);
+      _safeNotify();
+      return true;
+    } catch (e) {
+      _setError(e.toString());
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// Fetch applications for a specific job
+  Future<List<ApplicationModel>> fetchApplicationsForJob(int jobId) async {
+    _clearError();
+    try {
+      return await _repository.fetchApplications(jobId);
+    } catch (e) {
+      _setError(e.toString());
+      return [];
+    }
+  }
+
+  /// Update application status (accept or decline)
+  Future<bool> updateApplicationStatus(int applicationId, String status) async {
+    _clearError();
+    _setLoading(true);
+    try {
+      await _repository.updateApplicationStatus(applicationId: applicationId, status: status);
+      _safeNotify();
+      return true;
+    } catch (e) {
+      _setError(e.toString());
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// Fetch current user's job applications
+  Future<List<ApplicationModel>> fetchMyApplications() async {
+    final user = _authService.currentUser;
+    if (user == null) return [];
+
+    _clearError();
+    try {
+      return await _repository.fetchMyApplications(user.id);
+    } catch (e) {
+      _setError(e.toString());
+      return [];
     }
   }
 
@@ -351,26 +392,14 @@ class JobService extends ChangeNotifier {
     _clearError();
     _setLoading(true);
     try {
-      if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        _mockJobsDb.removeWhere((j) => j.id == jobId);
-        _jobs.removeWhere((j) => j.id == jobId);
-        _safeNotify();
-        return true;
-      } else {
-        final user = _authService.currentUser;
-        if (user == null) return false;
+      final user = _authService.currentUser;
+      if (user == null) return false;
 
-        await Supabase.instance.client
-            .from('jobs')
-            .delete()
-            .eq('id', jobId)
-            .eq('user_id', user.id);
+      await _repository.deleteJob(jobId: jobId, userId: user.id);
 
-        _jobs.removeWhere((j) => j.id == jobId);
-        _safeNotify();
-        return true;
-      }
+      _jobs.removeWhere((j) => j.id == jobId);
+      _safeNotify();
+      return true;
     } catch (e) {
       _setError(e.toString());
       return false;
@@ -391,6 +420,11 @@ class JobService extends ChangeNotifier {
     required List<String> imageUrls,
     required String status,
     String? rejectionComment,
+    String locationType = 'city',
+    String? city,
+    String? district,
+    String? settlement,
+    String? workType,
   }) async {
     final user = _authService.currentUser;
     if (user == null || title.trim().isEmpty || description.trim().isEmpty) return false;
@@ -399,61 +433,41 @@ class JobService extends ChangeNotifier {
     _clearError();
 
     try {
+      final updated = await _repository.updateJob(
+        jobId: jobId,
+        userId: user.id,
+        title: title,
+        description: description,
+        category: category,
+        budget: budget,
+        contactPhone: contactPhone,
+        contactTelegram: contactTelegram,
+        imageUrls: imageUrls,
+        status: status,
+        rejectionComment: rejectionComment,
+        locationType: locationType,
+        city: city,
+        district: district,
+        settlement: settlement,
+        workType: workType,
+      );
+
       if (_isMockMode) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        final dbIndex = _mockJobsDb.indexWhere((j) => j.id == jobId);
-        if (dbIndex != -1) {
-          final updated = _mockJobsDb[dbIndex].copyWith(
-            title: title.trim(),
-            description: description.trim(),
-            category: category,
-            budget: budget?.trim().isNotEmpty == true ? budget!.trim() : null,
-            contactPhone: contactPhone?.trim().isNotEmpty == true ? contactPhone!.trim() : null,
-            contactTelegram: contactTelegram?.trim().isNotEmpty == true ? contactTelegram!.trim() : null,
-            imageUrls: imageUrls,
-            status: status,
-            rejectionComment: rejectionComment,
-            clearRejectionComment: rejectionComment == null,
-          );
-          _mockJobsDb[dbIndex] = updated;
-
-          // Update active jobs list
-          final activeIndex = _jobs.indexWhere((j) => j.id == jobId);
-          if (activeIndex != -1) {
-            if (status == 'active') {
-              _jobs[activeIndex] = updated;
-            } else {
-              _jobs.removeAt(activeIndex);
-            }
-          } else if (status == 'active') {
-            _jobs.insert(0, updated);
+        final activeIndex = _jobs.indexWhere((j) => j.id == jobId);
+        if (activeIndex != -1) {
+          if (status == 'active') {
+            _jobs[activeIndex] = updated;
+          } else {
+            _jobs.removeAt(activeIndex);
           }
+        } else if (status == 'active') {
+          _jobs.insert(0, updated);
         }
-        _safeNotify();
-        return true;
       } else {
-        final Map<String, dynamic> updateData = {
-          'title': title.trim(),
-          'description': description.trim(),
-          'category': category,
-          'budget': budget?.trim().isNotEmpty == true ? budget!.trim() : null,
-          'contact_phone': contactPhone?.trim().isNotEmpty == true ? contactPhone!.trim() : null,
-          'contact_telegram': contactTelegram?.trim().isNotEmpty == true ? contactTelegram!.trim() : null,
-          'status': status,
-          'image_urls': imageUrls,
-          'rejection_comment': rejectionComment,
-          'updated_at': DateTime.now().toIso8601String(),
-        };
-
-        await Supabase.instance.client
-            .from('jobs')
-            .update(updateData)
-            .eq('id', jobId)
-            .eq('user_id', user.id);
-
-        await fetchJobs(); // reload public active jobs
-        return true;
+        await fetchJobs(); // reload public active jobs in Supabase mode
       }
+      _safeNotify();
+      return true;
     } catch (e) {
       debugPrint('Error updating job: $e');
       _setError(e.toString());

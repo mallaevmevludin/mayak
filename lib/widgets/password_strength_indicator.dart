@@ -76,8 +76,8 @@ class PasswordStrengthIndicator extends StatelessWidget {
           child: LinearProgressIndicator(
             value: strengthPercent,
             backgroundColor: isDark
-                ? const Color(0xFF2C2C2E)
-                : const Color(0xFFE5E5EA),
+                ? AppTheme.cardBorderDark
+                : AppTheme.cardBorderLight,
             color: strengthColor,
             minHeight: 6,
           ),
@@ -114,7 +114,7 @@ class PasswordStrengthIndicator extends StatelessWidget {
             shape: BoxShape.circle,
             color: isMet
                 ? AppTheme.success.withValues(alpha: 0.15)
-                : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7)),
+                : (isDark ? AppTheme.cardBorderDark : AppTheme.lightSurface),
           ),
           child: Icon(
             isMet ? Icons.check : Icons.close,

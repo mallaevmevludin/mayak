@@ -20,7 +20,7 @@ class MentionTextBuilder extends StatelessWidget {
     this.overflow,
   });
 
-  static final RegExp _mentionRegex = RegExp(r'@(\w+)');
+  static final RegExp _regex = RegExp(r'([@#])([a-zA-Z0-9_а-яА-ЯёЁ]+)');
 
   @override
   Widget build(BuildContext context) {
@@ -37,8 +37,8 @@ class MentionTextBuilder extends StatelessWidget {
     final spans = <InlineSpan>[];
     int lastEnd = 0;
 
-    for (final match in _mentionRegex.allMatches(text)) {
-      // Text before the mention
+    for (final match in _regex.allMatches(text)) {
+      // Text before the match
       if (match.start > lastEnd) {
         spans.add(
           TextSpan(
@@ -48,30 +48,45 @@ class MentionTextBuilder extends StatelessWidget {
         );
       }
 
-      final mentionText = match.group(0)!; // e.g., "@username"
-      final username = match.group(1)!; // e.g., "username"
+      final fullMatch = match.group(0)!; // e.g., "@username" or "#tag"
+      final prefix = match.group(1)!; // e.g., "@" or "#"
+      final value = match.group(2)!; // e.g., "username" or "tag"
 
-      spans.add(
-        TextSpan(
-          text: mentionText,
-          style: defaultStyle.copyWith(
-            color: const Color(0xFF007AFF),
-            fontWeight: FontWeight.w600,
+      if (prefix == '@') {
+        spans.add(
+          TextSpan(
+            text: fullMatch,
+            style: defaultStyle.copyWith(
+              color: const Color(0xFF007AFF),
+              fontWeight: FontWeight.w600,
+            ),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => _navigateToProfile(context, value),
           ),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () => _navigateToProfile(context, username),
-        ),
-      );
+        );
+      } else {
+        spans.add(
+          TextSpan(
+            text: fullMatch,
+            style: defaultStyle.copyWith(
+              color: const Color(0xFF34C759), // Use a nice premium green/blue color for hashtags
+              fontWeight: FontWeight.w600,
+            ),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => _onHashtagTap(context, value),
+          ),
+        );
+      }
 
       lastEnd = match.end;
     }
 
-    // Remaining text after last mention
+    // Remaining text after last match
     if (lastEnd < text.length) {
       spans.add(TextSpan(text: text.substring(lastEnd), style: defaultStyle));
     }
 
-    // No mentions found — return simple text
+    // No matches found — return simple text
     if (spans.isEmpty) {
       spans.add(TextSpan(text: text, style: defaultStyle));
     }
@@ -81,6 +96,13 @@ class MentionTextBuilder extends StatelessWidget {
       maxLines: maxLines,
       overflow: overflow ?? TextOverflow.clip,
     );
+  }
+
+  void _onHashtagTap(BuildContext context, String tag) {
+    Provider.of<SocialService>(context, listen: false).setSelectedTag(tag);
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _navigateToProfile(BuildContext context, String username) async {

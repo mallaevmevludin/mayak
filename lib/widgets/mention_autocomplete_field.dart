@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/user_model.dart';
 import '../services/social_service.dart';
 import '../theme/app_theme.dart';
+import 'user_avatar.dart';
 
 /// A TextField with @mention autocomplete overlay.
 /// When user types '@', shows a dropdown of matching users.
@@ -153,7 +154,7 @@ class _MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
               child: Container(
                 constraints: const BoxConstraints(maxHeight: 200),
                 decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
+                  color: isDark ? AppTheme.cardBorderDark : Colors.white,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
                     color: isDark
@@ -187,28 +188,10 @@ class _MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                           ),
                           child: Row(
                             children: [
-                              CircleAvatar(
-                                radius: 16,
-                                backgroundColor: isDark
-                                    ? Colors.white.withValues(alpha: 0.08)
-                                    : Colors.black.withValues(alpha: 0.04),
-                                backgroundImage: (user.avatarUrl != null && user.avatarUrl!.isNotEmpty)
-                                    ? NetworkImage(user.avatarUrl!)
-                                    : null,
-                                child: (user.avatarUrl != null && user.avatarUrl!.isNotEmpty)
-                                    ? null
-                                    : Text(
-                                        user.username.isNotEmpty
-                                            ? user.username[0].toUpperCase()
-                                            : 'U',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
-                                          color: isDark
-                                              ? Colors.white70
-                                              : Colors.black87,
-                                        ),
-                                      ),
+                              UserAvatar.fromUsername(
+                                username: user.username,
+                                avatarUrl: user.avatarUrl,
+                                size: 32,
                               ),
                               const SizedBox(width: 10),
                               Expanded(
@@ -309,7 +292,7 @@ class _MentionAutocompleteFieldState extends State<MentionAutocompleteField> {
                   horizontal: 16,
                   vertical: 12,
                 ),
-                fillColor: isDark ? const Color(0xFF2C2C2E) : Colors.grey[100],
+                fillColor: isDark ? AppTheme.cardBorderDark : AppTheme.lightSurface,
                 filled: true,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
